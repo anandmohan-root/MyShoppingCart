@@ -5,11 +5,14 @@ import com.myshoppingcart.order.domain.Order;
 import com.myshoppingcart.order.domain.OrderStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,14 +43,15 @@ class JdbcOrders implements Orders {
     @Transactional
     public void create(Order order) {
         jdbc.sql("""
-                        INSERT INTO orders (id, customer_id, product_id, quantity, total, status)
-                        VALUES (:id, :customerId, :productId, :quantity, :total, :status)""")
+                        INSERT INTO orders (id, customer_id, product_id, quantity, total, status, created_at)
+                        VALUES (:id, :customerId, :productId, :quantity, :total, :status, :createdAt)""")
                 .param("id", order.id())
                 .param("customerId", order.customerId())
                 .param("productId", order.productId())
                 .param("quantity", order.quantity())
                 .param("total", order.total())
                 .param("status", order.status().name())
+                .param("createdAt", Timestamp.from(order.createdAt()))
                 .update();
 
         jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
@@ -57,18 +61,32 @@ class JdbcOrders implements Orders {
                 .update();
     }
 
+    private static final String COLUMNS = "id, customer_id, product_id, quantity, total, status, created_at";
+
+    private static final RowMapper<Order> MAPPER = (rs, n) -> new Order(
+            rs.getObject("id", UUID.class),
+            rs.getString("customer_id"),
+            rs.getObject("product_id", UUID.class),
+            rs.getInt("quantity"),
+            rs.getBigDecimal("total"),
+            OrderStatus.valueOf(rs.getString("status")),
+            rs.getTimestamp("created_at").toInstant());
+
     @Override
     public Optional<Order> findById(UUID id) {
-        return jdbc.sql("SELECT id, customer_id, product_id, quantity, total, status FROM orders WHERE id = :id")
+        return jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE id = :id")
                 .param("id", id)
-                .query((rs, n) -> new Order(
-                        rs.getObject("id", UUID.class),
-                        rs.getString("customer_id"),
-                        rs.getObject("product_id", UUID.class),
-                        rs.getInt("quantity"),
-                        rs.getBigDecimal("total"),
-                        OrderStatus.valueOf(rs.getString("status"))))
+                .query(MAPPER)
                 .optional();
+    }
+
+    @Override
+    public List<Order> findByCustomer(String customerId, int limit) {
+        return jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE customer_id = :customerId ORDER BY created_at DESC LIMIT :limit")
+                .param("customerId", customerId)
+                .param("limit", limit)
+                .query(MAPPER)
+                .list();
     }
 
     /** Compare-and-set on the status, so a concurrent change is detected instead of overwritten. */

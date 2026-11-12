@@ -1,6 +1,8 @@
 package com.myshoppingcart.order.domain;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 /**
@@ -12,14 +14,17 @@ import java.util.UUID;
  * PENDING or PAID --customer---> CANCELLED (a paid order is refunded)
  * </pre>
  */
-public record Order(UUID id, String customerId, UUID productId, int quantity, BigDecimal total, OrderStatus status) {
+public record Order(UUID id, String customerId, UUID productId, int quantity, BigDecimal total, OrderStatus status,
+                    Instant createdAt) {
 
     public static Order place(String customerId, UUID productId, int quantity, BigDecimal unitPrice) {
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity must be at least 1");
         }
         BigDecimal total = unitPrice.multiply(BigDecimal.valueOf(quantity));
-        return new Order(UUID.randomUUID(), customerId, productId, quantity, total, OrderStatus.PENDING);
+        // PostgreSQL stores microseconds; truncating keeps the returned order equal to the stored one.
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        return new Order(UUID.randomUUID(), customerId, productId, quantity, total, OrderStatus.PENDING, now);
     }
 
     /** Only a pending order becomes paid; for any other status the payment changes nothing here. */
@@ -44,6 +49,6 @@ public record Order(UUID id, String customerId, UUID productId, int quantity, Bi
     }
 
     private Order withStatus(OrderStatus newStatus) {
-        return new Order(id, customerId, productId, quantity, total, newStatus);
+        return new Order(id, customerId, productId, quantity, total, newStatus, createdAt);
     }
 }

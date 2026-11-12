@@ -2,6 +2,7 @@ package com.myshoppingcart.order.application;
 
 import com.myshoppingcart.order.domain.Order;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,6 +13,9 @@ public interface Orders {
     void create(Order order);
 
     Optional<Order> findById(UUID id);
+
+    /** The customer's most recent orders, newest first. */
+    List<Order> findByCustomer(String customerId, int limit);
 
     /**
      * Saves {@code after} only if the stored order still has the status of {@code before}.

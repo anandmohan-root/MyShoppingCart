@@ -2,7 +2,8 @@
 # End-to-end check through Kong against the running stack:
 #   1. an order is paid,
 #   2. an order above the card limit is declined,
-#   3. a paid order is cancelled and its payment refunded.
+#   3. a paid order is cancelled and its payment refunded,
+#   4. the customer's orders are listed, newest first.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -72,4 +73,13 @@ done
 [ "$REFUND" = "REFUNDED" ] || { echo "FAILED: payment for $PAID is '$REFUND', not REFUNDED"; exit 1; }
 echo "  payment for order $PAID is REFUNDED"
 
-echo "OK: paid, declined, and cancelled with refund"
+echo "4. Listing my orders (newest first) ..."
+MINE=$(curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders")
+echo "$MINE" | grep -o '"id":"[^"]*"[^}]*"status":"[^"]*"' | sed 's/^/  /' | head -5
+for id in "$DECLINED" "$PAID"; do
+  echo "$MINE" | grep -q "\"id\":\"$id\"" || { echo "FAILED: order $id is missing from GET /orders"; exit 1; }
+done
+NEWEST=$(echo "$MINE" | sed -n 's/^\[{"id":"\([^"]*\)".*/\1/p')
+[ "$NEWEST" = "$DECLINED" ] || { echo "FAILED: the newest order ($DECLINED) is not listed first"; exit 1; }
+
+echo "OK: paid, declined, cancelled with refund, and listed"

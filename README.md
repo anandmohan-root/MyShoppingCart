@@ -83,8 +83,8 @@ bash scripts/smoke.sh
 ```
 
 The script signs in as the test user and checks three journeys through Kong: an order that is
-paid, an order above the card limit that is declined, and a paid order that is cancelled and
-refunded. The main steps by hand:
+paid, an order above the card limit that is declined, a paid order that is cancelled and
+refunded, and the list of the customer's orders. The main steps by hand:
 
 ```bash
 source .env
@@ -108,7 +108,13 @@ The response contains the order `id` with status `PENDING`. A moment later:
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>
 ```
 
-shows status `PAID`. To cancel it, which also refunds the payment:
+shows status `PAID`. All of your orders, newest first (`?limit=` takes 1 to 100, default 20):
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders
+```
+
+To cancel an order, which also refunds its payment:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>/cancel
@@ -166,7 +172,8 @@ mvn verify
 This runs the unit tests and the integration tests against real PostgreSQL and Kafka containers:
 
 - `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
-  only the owner can cancel, unreadable message to the dead-letter topic.
+  only the owner can cancel, each customer lists only their own orders, unreadable message to
+  the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
 

@@ -139,6 +139,28 @@ class OrderFlowIntegrationTest {
     }
 
     @Test
+    void customersSeeOnlyTheirOwnOrdersNewestFirst() throws Exception {
+        String first = placeAs("bob");
+        String second = placeAs("bob");
+        placeAs("carol");
+
+        mvc.perform(get("/orders").with(jwt().jwt(j -> j.subject("bob"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(second))
+                .andExpect(jsonPath("$[1].id").value(first))
+                .andExpect(jsonPath("$[0].createdAt").exists());
+
+        mvc.perform(get("/orders").param("limit", "1").with(jwt().jwt(j -> j.subject("bob"))))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(second));
+
+        mvc.perform(get("/orders").with(jwt().jwt(j -> j.subject("dave"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         String key = UUID.randomUUID().toString();
         kafkaTemplate.send("payment-completed", key, "this is not JSON");
@@ -147,8 +169,12 @@ class OrderFlowIntegrationTest {
     }
 
     private String place() throws Exception {
+        return placeAs("alice");
+    }
+
+    private String placeAs(String customer) throws Exception {
         String response = mvc.perform(post("/orders")
-                        .with(jwt().jwt(j -> j.subject("alice")))
+                        .with(jwt().jwt(j -> j.subject(customer)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"productId\":\"%s\",\"quantity\":1}".formatted(PRODUCT)))
                 .andExpect(status().isCreated())

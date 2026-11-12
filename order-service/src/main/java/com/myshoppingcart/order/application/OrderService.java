@@ -6,11 +6,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class OrderService {
+
+    public static final int MAX_LIST = 100;
 
     private final Orders orders;
     private final ProductCatalog catalog;
@@ -25,6 +28,11 @@ public class OrderService {
         Order order = Order.place(customerId, productId, quantity, unitPrice);
         orders.create(order);
         return order;
+    }
+
+    /** The caller's own orders, newest first. {@code limit} is kept between 1 and {@link #MAX_LIST}. */
+    public List<Order> list(String customerId, int limit) {
+        return orders.findByCustomer(customerId, Math.clamp(limit, 1, MAX_LIST));
     }
 
     public Optional<Order> find(UUID orderId, String customerId) {

@@ -16,10 +16,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -38,6 +40,12 @@ class OrderController {
     @ResponseStatus(HttpStatus.CREATED)
     Order place(@RequestBody PlaceOrderRequest request, @AuthenticationPrincipal Jwt jwt) {
         return orders.place(jwt.getSubject(), request.productId(), request.quantity());
+    }
+
+    /** The caller's own orders, newest first; at most {@code limit} of them (1 to 100). */
+    @GetMapping("/orders")
+    List<Order> list(@RequestParam(defaultValue = "20") int limit, @AuthenticationPrincipal Jwt jwt) {
+        return orders.list(jwt.getSubject(), limit);
     }
 
     /** Callers only see their own orders; anyone else's order is a 404. */
