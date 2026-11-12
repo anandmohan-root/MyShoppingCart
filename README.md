@@ -6,7 +6,8 @@ request entering through Kong. It runs in Docker containers and starts with one 
 
 ![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog and order services; order-service publishes OrderCreated to Kafka through an outbox, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
 
-The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step.
+The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step. To change the
+diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again as `docs/architecture.png`.
 
 ## Architecture concepts
 
