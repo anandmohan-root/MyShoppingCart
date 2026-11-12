@@ -3,7 +3,7 @@ package com.example.shop.order.domain;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-/** A single-product order. Multi-line orders are left out of this sample. */
+/** A single-product order. Multi-line orders are left out of MyShoppingCart. */
 public record Order(UUID id, String customerId, UUID productId, int quantity, BigDecimal total, OrderStatus status) {
 
     public static Order place(String customerId, UUID productId, int quantity, BigDecimal unitPrice) {

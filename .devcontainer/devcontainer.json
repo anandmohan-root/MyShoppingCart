@@ -1,5 +1,5 @@
 {
-  "name": "shopping-platform-sample",
+  "name": "MyShoppingCart",
   "image": "mcr.microsoft.com/devcontainers/java:21",
   "features": {
     "ghcr.io/devcontainers/features/java:1": {

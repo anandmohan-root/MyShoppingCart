@@ -1,6 +1,6 @@
-# Shopping platform sample
+# MyShoppingCart
 
-A small, runnable slice of the on-premises online shopping platform architecture. It runs
+MyShoppingCart is a small, runnable slice of the on-premises online shopping platform architecture. It runs
 entirely in Docker containers on one laptop and exists to try the main concepts end to end,
 not to be a complete shop.
 
@@ -45,7 +45,7 @@ not to be a complete shop.
 
 ## Mapping to the architecture slide
 
-| On the slide | In this sample | Why |
+| On the slide | In MyShoppingCart | Why |
 |---|---|---|
 | Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are left out; services validate JWTs themselves |
 | Keycloak | Included, dev mode, realm imported at start | One realm, one public client, one test user |
