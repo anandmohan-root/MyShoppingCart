@@ -190,10 +190,16 @@ docker compose start catalog-service
 ### Stop
 
 ```bash
-docker compose down -v
+docker compose down
 ```
 
-`-v` also removes the database and Kafka data. Carts are lost whenever the Redis container is removed.
+Orders, payments and Kafka's topics are kept in the Docker volumes `postgres-data` and
+`kafka-data`, so the next `docker compose up -d` carries on where you stopped. Carts live in Redis
+without a volume and are emptied by `down`. To start again from nothing:
+
+```bash
+docker compose down -v
+```
 
 ## Build and test without the stack
 
