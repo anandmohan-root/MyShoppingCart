@@ -27,6 +27,12 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 
 ## Mapping to the reference architecture
 
+The full target architecture, with every layer and one leading tool per layer, is drawn for two
+deployments: [`docs/target-architecture-on-prem.pptx`](docs/target-architecture-on-prem.pptx)
+(self-hosted, which this repository follows) and
+[`docs/target-architecture-aws.pptx`](docs/target-architecture-aws.pptx) (on AWS). The table
+shows which parts of it MyShoppingCart runs today.
+
 | Reference architecture | In MyShoppingCart | Notes |
 |---|---|---|
 | Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
