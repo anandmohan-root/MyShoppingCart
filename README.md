@@ -4,28 +4,9 @@ MyShoppingCart is an online shopping application built on the on-premises shoppi
 architecture: a product catalog, ordering and payment, with sign-in through Keycloak and every
 request entering through Kong. It runs in Docker containers and starts with one Docker Compose command.
 
-```
-            curl / browser
-                  |
-            Kong :8000  (single entry point, DB-less)
-        /realms   /products     /orders
-           |          |            |
-       Keycloak   catalog-     order-service --REST (timeout, retry, circuit breaker)--> catalog-service
-                  service          |
-                     |          orders DB (order + outbox row, one transaction)
-                 catalog DB        |
-                              outbox relay
-                                   |  OrderCreated
-                                 Kafka
-                                   |
-                            payment-service (idempotent consumer) -- payments DB
-                                   |  PaymentCompleted
-                                 Kafka
-                                   |
-                            order-service  -> order becomes PAID
+![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog and order services; order-service publishes OrderCreated to Kafka through an outbox, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
 
-   All three services export traces, metrics and logs over OpenTelemetry to Grafana :3000
-```
+The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step.
 
 ## Architecture concepts
 
