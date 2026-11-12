@@ -25,6 +25,6 @@ class PaymentCompletedListener {
 
     @KafkaListener(topics = "payment-completed")
     void onPaymentCompleted(String payload) throws JsonProcessingException {
-        orders.markPaid(json.readValue(payload, PaymentCompleted.class).orderId());
+        orders.paymentCompleted(json.readValue(payload, PaymentCompleted.class).orderId());
     }
 }

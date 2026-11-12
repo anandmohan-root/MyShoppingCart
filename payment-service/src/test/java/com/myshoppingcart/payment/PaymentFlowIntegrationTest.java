@@ -23,11 +23,11 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
- * Payment side of the order-to-payment flow against real PostgreSQL and Kafka:
- * a duplicated OrderCreated (at-least-once delivery) produces exactly one payment
- * and exactly one PaymentCompleted.
+ * Payment side of the order-to-payment flow against real PostgreSQL and Kafka. Events leave
+ * through the outbox, so these tests also cover the relay.
  */
 @SpringBootTest
 @Testcontainers
@@ -49,45 +49,85 @@ class PaymentFlowIntegrationTest {
 
     @Test
     void duplicateOrderCreatedIsPaidOnce() {
-        UUID first = UUID.randomUUID();
-        UUID second = UUID.randomUUID();
-        send(first);
-        send(first);
-        // The topic has one partition, so once the second order is answered both copies of the first were handled.
-        send(second);
+        UUID orderId = UUID.randomUUID();
+        orderCreated(orderId, "37.50");
+        orderCreated(orderId, "37.50");
 
-        List<String> paidOrderIds = readPaymentCompleted(2);
+        List<String> events = readFor("payment-completed", orderId, 1);
 
-        assertThat(paidOrderIds).containsExactly(first.toString(), second.toString());
-        assertThat(jdbc.sql("SELECT count(*) FROM payment").query(Long.class).single()).isEqualTo(2);
+        assertThat(events).hasSize(1);
+        assertThat(paymentStatus(orderId)).isEqualTo("COMPLETED");
+        assertThat(jdbc.sql("SELECT count(*) FROM payment WHERE order_id = :id").param("id", orderId)
+                .query(Long.class).single()).isEqualTo(1);
     }
 
-    private void send(UUID orderId) {
+    @Test
+    void amountAboveTheLimitIsDeclined() {
+        UUID orderId = UUID.randomUUID();
+        orderCreated(orderId, "1245.00");
+
+        List<String> events = readFor("payment-declined", orderId, 1);
+
+        assertThat(events).hasSize(1);
+        assertThat(JsonPath.<String>read(events.getFirst(), "$.reason")).isEqualTo("amount above the card limit");
+        assertThat(paymentStatus(orderId)).isEqualTo("DECLINED");
+    }
+
+    @Test
+    void refundRequestedRefundsACompletedPayment() {
+        UUID orderId = UUID.randomUUID();
+        orderCreated(orderId, "37.50");
+        await().atMost(Duration.ofSeconds(20)).until(() -> "COMPLETED".equals(paymentStatus(orderId)));
+
+        kafkaTemplate.send("refund-requested", orderId.toString(), "{\"orderId\":\"%s\",\"amount\":37.50}".formatted(orderId));
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> "REFUNDED".equals(paymentStatus(orderId)));
+    }
+
+    @Test
+    void unreadableMessageMovesToTheDeadLetterTopic() {
+        UUID key = UUID.randomUUID();
+        kafkaTemplate.send("order-created", key.toString(), "this is not JSON");
+
+        assertThat(readFor("order-created-dlt", key, 1)).containsExactly("this is not JSON");
+    }
+
+    private void orderCreated(UUID orderId, String amount) {
         kafkaTemplate.send("order-created", orderId.toString(),
-                "{\"orderId\":\"%s\",\"customerId\":\"alice\",\"amount\":37.50}".formatted(orderId));
+                "{\"orderId\":\"%s\",\"customerId\":\"alice\",\"amount\":%s}".formatted(orderId, amount));
     }
 
-    /** Reads until the expected number of messages arrived, then listens a little longer to catch an unwanted extra. */
-    private static List<String> readPaymentCompleted(int expected) {
+    private String paymentStatus(UUID orderId) {
+        return jdbc.sql("SELECT status FROM payment WHERE order_id = :id").param("id", orderId)
+                .query(String.class).optional().orElse(null);
+    }
+
+    /**
+     * Reads the messages keyed by this order until the expected number arrived, then listens a
+     * little longer to catch an unwanted extra one.
+     */
+    private static List<String> readFor(String topic, UUID key, int expected) {
         Map<String, Object> config = Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-                ConsumerConfig.GROUP_ID_CONFIG, "test",
+                ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID(),
                 ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
                 ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
                 ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        List<String> orderIds = new ArrayList<>();
+        List<String> values = new ArrayList<>();
         try (var consumer = new KafkaConsumer<String, String>(config)) {
-            consumer.subscribe(List.of("payment-completed"));
+            consumer.subscribe(List.of(topic));
             long deadline = System.currentTimeMillis() + 30_000;
             while (System.currentTimeMillis() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
-                    orderIds.add(JsonPath.read(record.value(), "$.orderId"));
+                    if (key.toString().equals(record.key())) {
+                        values.add(record.value());
+                    }
                 }
-                if (orderIds.size() >= expected) {
+                if (values.size() >= expected) {
                     deadline = Math.min(deadline, System.currentTimeMillis() + 2_000);
                 }
             }
         }
-        return orderIds;
+        return values;
     }
 }

@@ -15,9 +15,12 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 |---|---|
 | Hexagonal layout (domain, application ports, adapters in/out) | every service: `domain`, `application`, `adapter/in`, `adapter/out` |
 | Database per service | `infra/postgres/init.sql`, one Flyway migration per service |
-| Transactional outbox | `order-service` `JdbcOrders.create` (writes order + event) and `OutboxRelay` (publishes) |
-| Event-driven saga (choreography) over Kafka | `OrderCreated` -> payment -> `PaymentCompleted` -> order `PAID` |
-| Idempotent consumer | `payment-service` `PaymentService.payFor` + unique `order_id` in `V1__payment.sql` |
+| Transactional outbox | Both services: `JdbcOrders` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
+| Event-driven saga (choreography) over Kafka | `OrderCreated` -> payment -> `PaymentCompleted` (order `PAID`) or `PaymentDeclined` (order `PAYMENT_DECLINED`) |
+| Saga compensation | Cancelling a paid order, or a payment arriving after cancellation, sends `RefundRequested`; payment-service refunds. `OrderService.cancel` / `paymentCompleted` |
+| Idempotent consumer | `payment-service` `PaymentService.payFor` + unique `order_id` in `V1__payment.sql`; `refund` and the order status changes are safe to repeat |
+| Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
+| Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog and order |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
@@ -53,9 +56,11 @@ shows which parts of it MyShoppingCart runs today.
 ## Current limitations
 
 - An order has one product and a quantity. There are no order lines.
-- Payment always succeeds; there is no payment provider and so no failure or compensation path in the saga.
+- There is no payment provider. A charge above `payment.decline-above` (1000.00, in payment-service's
+  `application.yml`) is declined; anything else succeeds. A refund only changes the payment's status.
+- Nothing reads the dead-letter topics yet; inspect them with Kafka's console consumer.
 - The outbox is polled every 500 ms. Production designs often use change data capture (Debezium) instead.
-- Delivery is at least once on both topics. `payment-service` de-duplicates by order id; marking an order paid twice is harmless.
+- Delivery is at least once on every topic. Each consumer is idempotent, so a repeated event changes nothing.
 - Service-to-service traffic inside the Docker network is plain HTTP.
 - All credentials are generated test values. Do not reuse them anywhere.
 
@@ -77,8 +82,9 @@ The first run downloads images and builds the services, which takes several minu
 bash scripts/smoke.sh
 ```
 
-The script waits for Keycloak, signs in as the test user, lists products, places an order
-through Kong and polls until the order is `PAID`. The same steps by hand:
+The script signs in as the test user and checks three journeys through Kong: an order that is
+paid, an order above the card limit that is declined, and a paid order that is cancelled and
+refunded. The main steps by hand:
 
 ```bash
 source .env
@@ -102,7 +108,15 @@ The response contains the order `id` with status `PENDING`. A moment later:
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>
 ```
 
-shows status `PAID`. Without the `Authorization` header every call returns `401`.
+shows status `PAID`. To cancel it, which also refunds the payment:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>/cancel
+```
+
+An order of 5 Espresso Machines (`11111111-1111-1111-1111-111111111111`, total 1245.00) ends as
+`PAYMENT_DECLINED`. A declined or already cancelled order cannot be cancelled (`409`). Without the
+`Authorization` header every call returns `401`.
 
 ### See the traces
 
@@ -149,11 +163,15 @@ Needs Java 21, Maven and a running Docker (for Testcontainers).
 mvn verify
 ```
 
-This runs the unit tests and two integration tests against real PostgreSQL and Kafka
-containers: `OrderFlowIntegrationTest` (order placed, `OrderCreated` published through the
-outbox, order `PAID` after `PaymentCompleted`) and `PaymentFlowIntegrationTest` (a duplicated
-`OrderCreated` is paid exactly once). The two services are tested separately; the full
-round trip through both is what `scripts/smoke.sh` checks against the running stack.
+This runs the unit tests and the integration tests against real PostgreSQL and Kafka containers:
+
+- `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
+  only the owner can cancel, unreadable message to the dead-letter topic.
+- `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
+  is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
+
+The two services are tested separately; the full round trip through both is what
+`scripts/smoke.sh` checks against the running stack.
 
 ## Run it on GitHub
 

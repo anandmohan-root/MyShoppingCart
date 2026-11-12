@@ -3,7 +3,15 @@ package com.myshoppingcart.order.domain;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-/** A single-product order. Multi-line orders are not supported yet. */
+/**
+ * A single-product order. Multi-line orders are not supported yet.
+ *
+ * <pre>
+ * PENDING --payment completed--> PAID
+ * PENDING --payment declined---> PAYMENT_DECLINED
+ * PENDING or PAID --customer---> CANCELLED (a paid order is refunded)
+ * </pre>
+ */
 public record Order(UUID id, String customerId, UUID productId, int quantity, BigDecimal total, OrderStatus status) {
 
     public static Order place(String customerId, UUID productId, int quantity, BigDecimal unitPrice) {
@@ -14,7 +22,28 @@ public record Order(UUID id, String customerId, UUID productId, int quantity, Bi
         return new Order(UUID.randomUUID(), customerId, productId, quantity, total, OrderStatus.PENDING);
     }
 
+    /** Only a pending order becomes paid; for any other status the payment changes nothing here. */
     public Order paid() {
-        return new Order(id, customerId, productId, quantity, total, OrderStatus.PAID);
+        return status == OrderStatus.PENDING ? withStatus(OrderStatus.PAID) : this;
+    }
+
+    /** Only a pending order is declined; for any other status the decline changes nothing here. */
+    public Order declined() {
+        return status == OrderStatus.PENDING ? withStatus(OrderStatus.PAYMENT_DECLINED) : this;
+    }
+
+    public boolean canBeCancelled() {
+        return status == OrderStatus.PENDING || status == OrderStatus.PAID;
+    }
+
+    public Order cancelled() {
+        if (!canBeCancelled()) {
+            throw new OrderNotCancellableException(id, status);
+        }
+        return withStatus(OrderStatus.CANCELLED);
+    }
+
+    private Order withStatus(OrderStatus newStatus) {
+        return new Order(id, customerId, productId, quantity, total, newStatus);
     }
 }

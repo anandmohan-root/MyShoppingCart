@@ -17,9 +17,14 @@ import java.util.UUID;
 class JdbcOrders implements Orders {
 
     static final String ORDER_CREATED_TOPIC = "order-created";
+    static final String REFUND_REQUESTED_TOPIC = "refund-requested";
 
     /** The OrderCreated message contract, as consumed by payment-service. */
     record OrderCreated(UUID orderId, String customerId, BigDecimal amount) {
+    }
+
+    /** The RefundRequested message contract, as consumed by payment-service. */
+    record RefundRequested(UUID orderId, BigDecimal amount) {
     }
 
     private final JdbcClient jdbc;
@@ -66,15 +71,26 @@ class JdbcOrders implements Orders {
                 .optional();
     }
 
+    /** Compare-and-set on the status, so a concurrent change is detected instead of overwritten. */
     @Override
-    public void updateStatus(Order order) {
-        jdbc.sql("UPDATE orders SET status = :status WHERE id = :id")
-                .param("status", order.status().name())
-                .param("id", order.id())
+    public boolean transition(Order before, Order after) {
+        return jdbc.sql("UPDATE orders SET status = :after WHERE id = :id AND status = :before")
+                .param("after", after.status().name())
+                .param("id", before.id())
+                .param("before", before.status().name())
+                .update() == 1;
+    }
+
+    @Override
+    public void requestRefund(Order order) {
+        jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
+                .param("topic", REFUND_REQUESTED_TOPIC)
+                .param("key", order.id().toString())
+                .param("payload", toJson(new RefundRequested(order.id(), order.total())))
                 .update();
     }
 
-    private String toJson(OrderCreated event) {
+    private String toJson(Object event) {
         try {
             return json.writeValueAsString(event);
         } catch (JsonProcessingException e) {

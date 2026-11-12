@@ -7,10 +7,15 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OrderTest {
 
     private static final UUID PRODUCT = UUID.randomUUID();
+
+    private static Order pending() {
+        return Order.place("alice", PRODUCT, 1, BigDecimal.TEN);
+    }
 
     @Test
     void newOrderIsPendingWithTotalOfPriceTimesQuantity() {
@@ -27,9 +32,32 @@ class OrderTest {
 
     @Test
     void payingIsIdempotent() {
-        Order paid = Order.place("alice", PRODUCT, 1, BigDecimal.TEN).paid();
+        Order paid = pending().paid();
 
         assertThat(paid.status()).isEqualTo(OrderStatus.PAID);
         assertThat(paid.paid()).isEqualTo(paid);
+    }
+
+    @Test
+    void declinedPaymentEndsAPendingOrderOnly() {
+        assertThat(pending().declined().status()).isEqualTo(OrderStatus.PAYMENT_DECLINED);
+        assertThat(pending().paid().declined().status()).isEqualTo(OrderStatus.PAID);
+    }
+
+    @Test
+    void pendingAndPaidOrdersCanBeCancelled() {
+        assertThat(pending().cancelled().status()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(pending().paid().cancelled().status()).isEqualTo(OrderStatus.CANCELLED);
+    }
+
+    @Test
+    void declinedOrCancelledOrdersCannotBeCancelled() {
+        assertThatThrownBy(() -> pending().declined().cancelled()).isInstanceOf(OrderNotCancellableException.class);
+        assertThatThrownBy(() -> pending().cancelled().cancelled()).isInstanceOf(OrderNotCancellableException.class);
+    }
+
+    @Test
+    void paymentArrivingAfterCancellationDoesNotReviveTheOrder() {
+        assertThat(pending().cancelled().paid().status()).isEqualTo(OrderStatus.CANCELLED);
     }
 }

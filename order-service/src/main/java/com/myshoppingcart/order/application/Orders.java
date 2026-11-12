@@ -13,5 +13,12 @@ public interface Orders {
 
     Optional<Order> findById(UUID id);
 
-    void updateStatus(Order order);
+    /**
+     * Saves {@code after} only if the stored order still has the status of {@code before}.
+     * Returns false if another change got there first, so the caller can reload and decide again.
+     */
+    boolean transition(Order before, Order after);
+
+    /** Records a RefundRequested event for the order, in the caller's transaction. */
+    void requestRefund(Order order);
 }

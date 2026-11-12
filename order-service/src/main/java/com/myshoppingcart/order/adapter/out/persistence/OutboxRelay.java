@@ -1,9 +1,6 @@
 package com.myshoppingcart.order.adapter.out.persistence;
 
-import org.apache.kafka.clients.admin.NewTopic;
-import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -28,11 +25,6 @@ class OutboxRelay {
     OutboxRelay(JdbcClient jdbc, KafkaTemplate<String, String> kafka) {
         this.jdbc = jdbc;
         this.kafka = kafka;
-    }
-
-    @Bean
-    NewTopic orderCreatedTopic() {
-        return TopicBuilder.name(JdbcOrders.ORDER_CREATED_TOPIC).build();
     }
 
     @Scheduled(fixedDelay = 500)

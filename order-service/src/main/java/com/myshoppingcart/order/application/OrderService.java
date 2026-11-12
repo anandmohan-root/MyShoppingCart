@@ -1,7 +1,9 @@
 package com.myshoppingcart.order.application;
 
 import com.myshoppingcart.order.domain.Order;
+import com.myshoppingcart.order.domain.OrderStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -29,8 +31,47 @@ public class OrderService {
         return orders.findById(orderId).filter(order -> order.customerId().equals(customerId));
     }
 
-    /** Safe to call more than once for the same order: Kafka delivers at least once. */
-    public void markPaid(UUID orderId) {
-        orders.findById(orderId).map(Order::paid).ifPresent(orders::updateStatus);
+    /**
+     * Customer cancellation. A pending order is simply cancelled; a paid order is cancelled and
+     * refunded (compensation). Throws {@link ConcurrentOrderChangeException} if a payment event
+     * changed the order at the same moment, so the customer can try again.
+     */
+    @Transactional
+    public Optional<Order> cancel(UUID orderId, String customerId) {
+        return find(orderId, customerId).map(order -> {
+            Order cancelled = order.cancelled();
+            if (!orders.transition(order, cancelled)) {
+                throw new ConcurrentOrderChangeException(orderId);
+            }
+            if (order.status() == OrderStatus.PAID) {
+                orders.requestRefund(order);
+            }
+            return cancelled;
+        });
+    }
+
+    /**
+     * Safe to call more than once: Kafka delivers at least once. If the customer cancelled while
+     * the payment was in flight, the money is refunded instead of the order being marked paid.
+     */
+    @Transactional
+    public void paymentCompleted(UUID orderId) {
+        orders.findById(orderId).ifPresent(order -> {
+            if (order.status() == OrderStatus.CANCELLED) {
+                orders.requestRefund(order);
+            } else if (!orders.transition(order, order.paid())) {
+                throw new ConcurrentOrderChangeException(orderId);
+            }
+        });
+    }
+
+    /** Safe to call more than once. A declined payment needs no compensation: nothing was charged. */
+    @Transactional
+    public void paymentDeclined(UUID orderId) {
+        orders.findById(orderId).ifPresent(order -> {
+            if (!orders.transition(order, order.declined())) {
+                throw new ConcurrentOrderChangeException(orderId);
+            }
+        });
     }
 }

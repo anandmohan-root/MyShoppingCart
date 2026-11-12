@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Signs in to Keycloak, places an order through Kong and waits for it to be PAID.
+# End-to-end check through Kong against the running stack:
+#   1. an order is paid,
+#   2. an order above the card limit is declined,
+#   3. a paid order is cancelled and its payment refunded.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
 
 GATEWAY=http://localhost:8000
+COFFEE_BEANS=33333333-3333-3333-3333-333333333333     # 18.75
+ESPRESSO_MACHINE=11111111-1111-1111-1111-111111111111 # 249.00
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
 
 echo "Waiting for Keycloak and signing in as $SHOP_USER ..."
@@ -23,22 +28,48 @@ curl -s --retry 20 --retry-all-errors --retry-delay 3 --fail \
   -H "Authorization: Bearer $TOKEN" "$GATEWAY/products"
 echo
 
-echo "Placing an order for 2 x Coffee Beans 1kg ..."
-ORDER=$(curl -s --retry 20 --retry-all-errors --retry-delay 3 --fail -X POST "$GATEWAY/orders" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"productId":"33333333-3333-3333-3333-333333333333","quantity":2}')
-echo "$ORDER"
-ORDER_ID=$(echo "$ORDER" | field id)
+# place <productId> <quantity>: prints the new order's id
+place() {
+  curl -s --retry 20 --retry-all-errors --retry-delay 3 --fail -X POST "$GATEWAY/orders" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "{\"productId\":\"$1\",\"quantity\":$2}" | field id
+}
 
+# expect_status <orderId> <status>: waits up to 30 s for the order to reach the status
+expect_status() {
+  local order
+  for _ in $(seq 30); do
+    order=$(curl -s -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$1")
+    if [ "$(echo "$order" | field status)" = "$2" ]; then
+      echo "  $order"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "  $order"
+  echo "FAILED: order $1 did not reach $2"
+  exit 1
+}
+
+echo "1. Paying for 2 x Coffee Beans 1kg (37.50) ..."
+PAID=$(place "$COFFEE_BEANS" 2)
+expect_status "$PAID" PAID
+
+echo "2. Ordering 5 x Espresso Machine (1245.00, above the 1000.00 card limit) ..."
+DECLINED=$(place "$ESPRESSO_MACHINE" 5)
+expect_status "$DECLINED" PAYMENT_DECLINED
+
+echo "3. Cancelling the paid order from step 1 ..."
+curl -s --fail -X POST -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$PAID/cancel" > /dev/null
+expect_status "$PAID" CANCELLED
+REFUND=""
 for _ in $(seq 30); do
-  ORDER=$(curl -s -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$ORDER_ID")
-  if [ "$(echo "$ORDER" | field status)" = "PAID" ]; then
-    echo "$ORDER"
-    echo "OK: order $ORDER_ID is PAID"
-    exit 0
-  fi
+  REFUND=$(docker compose exec -T postgres psql -U shop -d payments -tAc \
+    "SELECT status FROM payment WHERE order_id = '$PAID'")
+  [ "$REFUND" = "REFUNDED" ] && break
   sleep 1
 done
-echo "$ORDER"
-echo "FAILED: order $ORDER_ID did not reach PAID"
-exit 1
+[ "$REFUND" = "REFUNDED" ] || { echo "FAILED: payment for $PAID is '$REFUND', not REFUNDED"; exit 1; }
+echo "  payment for order $PAID is REFUNDED"
+
+echo "OK: paid, declined, and cancelled with refund"

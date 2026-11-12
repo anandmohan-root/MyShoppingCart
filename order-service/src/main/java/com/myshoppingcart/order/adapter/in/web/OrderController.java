@@ -1,8 +1,10 @@
 package com.myshoppingcart.order.adapter.in.web;
 
+import com.myshoppingcart.order.application.ConcurrentOrderChangeException;
 import com.myshoppingcart.order.application.OrderService;
 import com.myshoppingcart.order.application.UnknownProductException;
 import com.myshoppingcart.order.domain.Order;
+import com.myshoppingcart.order.domain.OrderNotCancellableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -42,6 +44,17 @@ class OrderController {
     @GetMapping("/orders/{id}")
     ResponseEntity<Order> get(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.of(orders.find(id, jwt.getSubject()));
+    }
+
+    /** Cancels a pending order, or cancels and refunds a paid one. Declined or cancelled orders return 409. */
+    @PostMapping("/orders/{id}/cancel")
+    ResponseEntity<Order> cancel(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.of(orders.cancel(id, jwt.getSubject()));
+    }
+
+    @ExceptionHandler({OrderNotCancellableException.class, ConcurrentOrderChangeException.class})
+    ProblemDetail conflict(RuntimeException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
     @ExceptionHandler({UnknownProductException.class, IllegalArgumentException.class})

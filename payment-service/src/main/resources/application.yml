@@ -9,3 +9,7 @@ spring:
     consumer:
       group-id: payment-service
       auto-offset-reset: earliest
+
+# Payment decision. There is no real payment provider: a charge above this amount is declined.
+payment:
+  decline-above: 1000.00
