@@ -87,8 +87,8 @@ public class OrderService {
     }
 
     /**
-     * Customer cancellation. A pending order is simply cancelled; a paid order is cancelled and
-     * refunded (compensation). Throws {@link ConcurrentOrderChangeException} if a payment event
+     * Customer cancellation. Its stock goes back to inventory; a paid order is also refunded
+     * (compensation). Throws {@link ConcurrentOrderChangeException} if a payment event
      * changed the order at the same moment, so the customer can try again.
      */
     @Transactional
@@ -98,6 +98,7 @@ public class OrderService {
             if (!orders.transition(order, cancelled)) {
                 throw new ConcurrentOrderChangeException(orderId);
             }
+            orders.announceCancellation(order);
             if (order.status() == OrderStatus.PAID) {
                 orders.requestRefund(order);
             }
@@ -120,11 +121,24 @@ public class OrderService {
         });
     }
 
-    /** Safe to call more than once. A declined payment needs no compensation: nothing was charged. */
+    /**
+     * Safe to call more than once. Nothing was charged, so there is nothing to refund; inventory
+     * puts the stock back when it sees the same PaymentDeclined event.
+     */
     @Transactional
     public void paymentDeclined(UUID orderId) {
         orders.findById(orderId).ifPresent(order -> {
             if (!orders.transition(order, order.declined())) {
+                throw new ConcurrentOrderChangeException(orderId);
+            }
+        });
+    }
+
+    /** Safe to call more than once. Nothing was reserved or charged, so nothing needs undoing. */
+    @Transactional
+    public void outOfStock(UUID orderId) {
+        orders.findById(orderId).ifPresent(order -> {
+            if (!orders.transition(order, order.outOfStock())) {
                 throw new ConcurrentOrderChangeException(orderId);
             }
         });

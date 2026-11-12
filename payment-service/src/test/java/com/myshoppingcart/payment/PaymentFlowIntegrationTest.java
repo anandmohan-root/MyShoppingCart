@@ -26,7 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Payment side of the order-to-payment flow against real PostgreSQL and Kafka. Events leave
+ * Payment side of the order saga against real PostgreSQL and Kafka. The tests send the
+ * StockReserved events inventory-service would send. Events leave
  * through the outbox, so these tests also cover the relay.
  */
 @SpringBootTest
@@ -48,10 +49,10 @@ class PaymentFlowIntegrationTest {
     JdbcClient jdbc;
 
     @Test
-    void duplicateOrderCreatedIsPaidOnce() {
+    void duplicateStockReservedIsPaidOnce() {
         UUID orderId = UUID.randomUUID();
-        orderCreated(orderId, "37.50");
-        orderCreated(orderId, "37.50");
+        stockReserved(orderId, "37.50");
+        stockReserved(orderId, "37.50");
 
         List<String> events = readFor("payment-completed", orderId, 1);
 
@@ -64,7 +65,7 @@ class PaymentFlowIntegrationTest {
     @Test
     void amountAboveTheLimitIsDeclined() {
         UUID orderId = UUID.randomUUID();
-        orderCreated(orderId, "1245.00");
+        stockReserved(orderId, "1245.00");
 
         List<String> events = readFor("payment-declined", orderId, 1);
 
@@ -76,7 +77,7 @@ class PaymentFlowIntegrationTest {
     @Test
     void refundRequestedRefundsACompletedPayment() {
         UUID orderId = UUID.randomUUID();
-        orderCreated(orderId, "37.50");
+        stockReserved(orderId, "37.50");
         await().atMost(Duration.ofSeconds(20)).until(() -> "COMPLETED".equals(paymentStatus(orderId)));
 
         kafkaTemplate.send("refund-requested", orderId.toString(), "{\"orderId\":\"%s\",\"amount\":37.50}".formatted(orderId));
@@ -87,13 +88,13 @@ class PaymentFlowIntegrationTest {
     @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         UUID key = UUID.randomUUID();
-        kafkaTemplate.send("order-created", key.toString(), "this is not JSON");
+        kafkaTemplate.send("stock-reserved", key.toString(), "this is not JSON");
 
-        assertThat(readFor("order-created-dlt", key, 1)).containsExactly("this is not JSON");
+        assertThat(readFor("stock-reserved-dlt", key, 1)).containsExactly("this is not JSON");
     }
 
-    private void orderCreated(UUID orderId, String amount) {
-        kafkaTemplate.send("order-created", orderId.toString(),
+    private void stockReserved(UUID orderId, String amount) {
+        kafkaTemplate.send("stock-reserved", orderId.toString(),
                 "{\"orderId\":\"%s\",\"customerId\":\"alice\",\"amount\":%s}".formatted(orderId, amount));
     }
 

@@ -10,25 +10,26 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+/** An order is charged once inventory has reserved its stock. */
 @Component
-class OrderCreatedListener {
+class StockReservedListener {
 
-    /** The part of the OrderCreated message (published by order-service) that this service needs. */
+    /** The part of the StockReserved message (published by inventory-service) that this service needs. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record OrderCreated(UUID orderId, BigDecimal amount) {
+    private record StockReserved(UUID orderId, BigDecimal amount) {
     }
 
     private final PaymentService payments;
     private final ObjectMapper json;
 
-    OrderCreatedListener(PaymentService payments, ObjectMapper json) {
+    StockReservedListener(PaymentService payments, ObjectMapper json) {
         this.payments = payments;
         this.json = json;
     }
 
-    @KafkaListener(topics = "order-created")
-    void onOrderCreated(String payload) throws JsonProcessingException {
-        OrderCreated event = json.readValue(payload, OrderCreated.class);
+    @KafkaListener(topics = "stock-reserved")
+    void onStockReserved(String payload) throws JsonProcessingException {
+        StockReserved event = json.readValue(payload, StockReserved.class);
         payments.payFor(event.orderId(), event.amount());
     }
 }

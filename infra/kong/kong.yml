@@ -17,6 +17,13 @@ services:
         paths: ["/products"]
         strip_path: false
 
+  - name: inventory
+    url: http://inventory-service:8080
+    routes:
+      - name: inventory
+        paths: ["/stock"]
+        strip_path: false
+
   - name: orders
     url: http://order-service:8080
     routes:

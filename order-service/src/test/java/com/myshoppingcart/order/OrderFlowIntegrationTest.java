@@ -105,6 +105,8 @@ class OrderFlowIntegrationTest {
 
         String orderCreated = readFor("order-created", orderId, 1).getFirst();
         assertThat(JsonPath.<Double>read(orderCreated, "$.amount")).isEqualTo(37.5);
+        assertThat(JsonPath.<String>read(orderCreated, "$.lines[0].productId")).isEqualTo(PRODUCT.toString());
+        assertThat(JsonPath.<Integer>read(orderCreated, "$.lines[0].quantity")).isEqualTo(2);
 
         send("payment-completed", orderId);
         awaitStatus(orderId, "PAID");
@@ -122,6 +124,27 @@ class OrderFlowIntegrationTest {
 
         mvc.perform(post("/orders/{id}/cancel", orderId).with(jwt().jwt(j -> j.subject("alice"))))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void rejectedStockEndsTheOrderAsOutOfStock() throws Exception {
+        String orderId = place();
+
+        send("stock-rejected", orderId);
+        awaitStatus(orderId, "OUT_OF_STOCK");
+
+        mvc.perform(post("/orders/{id}/cancel", orderId).with(jwt().jwt(j -> j.subject("alice"))))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void cancellingAnOrderTellsInventory() throws Exception {
+        String orderId = place();
+
+        mvc.perform(post("/orders/{id}/cancel", orderId).with(jwt().jwt(j -> j.subject("alice"))))
+                .andExpect(status().isOk());
+
+        assertThat(readFor("order-cancelled", orderId, 1)).hasSize(1);
     }
 
     @Test

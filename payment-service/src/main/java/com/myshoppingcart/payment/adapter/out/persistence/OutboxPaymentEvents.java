@@ -24,7 +24,7 @@ class OutboxPaymentEvents implements PaymentEvents {
     private record PaymentCompleted(UUID orderId, UUID paymentId) {
     }
 
-    /** The PaymentDeclined message contract, as consumed by order-service. */
+    /** The PaymentDeclined message contract, as consumed by order-service and inventory-service. */
     private record PaymentDeclined(UUID orderId, UUID paymentId, String reason) {
     }
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # End-to-end check through Kong against the running stack:
-#   1. an order is paid,
-#   2. an order above the card limit is declined,
-#   3. a paid order is cancelled and its payment refunded,
+#   1. an order is paid and its stock taken,
+#   2. an order above the card limit is declined and its stock put back,
+#   3. a paid order is cancelled, its payment refunded and its stock put back,
 #   4. the customer's orders are listed, newest first,
 #   5. a cart with two products is checked out as one paid order,
-#   6. an order sent twice with the same Idempotency-Key is placed once.
+#   6. an order sent twice with the same Idempotency-Key is placed once,
+#   7. an order for more than is in stock ends as OUT_OF_STOCK.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -39,6 +40,23 @@ place() {
     -d "{\"items\":[{\"productId\":\"$1\",\"quantity\":$2}]}" | field id
 }
 
+# stock_of <productId>: prints how many are in stock
+stock_of() {
+  curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/stock/$1" | sed -n 's/.*"available":\([0-9]*\).*/\1/p'
+}
+
+# expect_stock <productId> <count>: waits up to 30 s for the stock level
+expect_stock() {
+  local now=""
+  for _ in $(seq 30); do
+    now=$(stock_of "$1")
+    [ "$now" = "$2" ] && { echo "  stock of $1: $now"; return 0; }
+    sleep 1
+  done
+  echo "FAILED: stock of $1 is $now, not $2"
+  exit 1
+}
+
 # expect_status <orderId> <status>: waits up to 30 s for the order to reach the status
 expect_status() {
   local order
@@ -55,13 +73,20 @@ expect_status() {
   exit 1
 }
 
+curl -s --retry 20 --retry-all-errors --retry-delay 3 --fail -o /dev/null -H "Authorization: Bearer $TOKEN" "$GATEWAY/stock"
+BEANS_STOCK=$(stock_of "$COFFEE_BEANS")
+MACHINE_STOCK=$(stock_of "$ESPRESSO_MACHINE")
+echo "In stock: $BEANS_STOCK x Coffee Beans 1kg, $MACHINE_STOCK x Espresso Machine"
+
 echo "1. Paying for 2 x Coffee Beans 1kg (37.50) ..."
 PAID=$(place "$COFFEE_BEANS" 2)
 expect_status "$PAID" PAID
+expect_stock "$COFFEE_BEANS" $((BEANS_STOCK - 2))
 
 echo "2. Ordering 5 x Espresso Machine (1245.00, above the 1000.00 card limit) ..."
 DECLINED=$(place "$ESPRESSO_MACHINE" 5)
 expect_status "$DECLINED" PAYMENT_DECLINED
+expect_stock "$ESPRESSO_MACHINE" "$MACHINE_STOCK"
 
 echo "3. Cancelling the paid order from step 1 ..."
 curl -s --fail -X POST -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$PAID/cancel" > /dev/null
@@ -75,6 +100,7 @@ for _ in $(seq 30); do
 done
 [ "$REFUND" = "REFUNDED" ] || { echo "FAILED: payment for $PAID is '$REFUND', not REFUNDED"; exit 1; }
 echo "  payment for order $PAID is REFUNDED"
+expect_stock "$COFFEE_BEANS" "$BEANS_STOCK"
 
 echo "4. Listing my orders (newest first) ..."
 MINE=$(curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders")
@@ -113,4 +139,9 @@ SECOND=$(order_with_key)
 echo "  both requests returned order $FIRST"
 expect_status "$FIRST" PAID
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, and placed once per key"
+echo "7. Ordering one more Espresso Machine than is in stock ($((MACHINE_STOCK + 1))) ..."
+TOO_MANY=$(place "$ESPRESSO_MACHINE" $((MACHINE_STOCK + 1)))
+expect_status "$TOO_MANY" OUT_OF_STOCK
+expect_stock "$ESPRESSO_MACHINE" "$MACHINE_STOCK"
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, and out of stock"

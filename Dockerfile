@@ -1,4 +1,4 @@
-# One Dockerfile for all three services: docker compose passes SERVICE=<module name>.
+# One Dockerfile for all four services: docker compose passes SERVICE=<module name>.
 # The build stage is identical for every service, so Docker builds it once and reuses it.
 
 FROM maven:3.9-eclipse-temurin-21 AS build

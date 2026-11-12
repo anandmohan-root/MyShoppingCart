@@ -31,4 +31,7 @@ public interface Orders {
 
     /** Records a RefundRequested event for the order, in the caller's transaction. */
     void requestRefund(Order order);
+
+    /** Records an OrderCancelled event, so inventory puts the order's stock back; in the caller's transaction. */
+    void announceCancellation(Order order);
 }

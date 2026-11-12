@@ -1,10 +1,10 @@
 # MyShoppingCart
 
 MyShoppingCart is an online shopping application built on the on-premises shopping platform
-architecture: a product catalog, a shopping cart, ordering and payment, with sign-in through Keycloak and every
+architecture: a product catalog, a shopping cart, ordering, stock and payment, with sign-in through Keycloak and every
 request entering through Kong. It runs in Docker containers and starts with one Docker Compose command.
 
-![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog and order services; order-service keeps carts in Redis and publishes OrderCreated to Kafka through an outbox, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
+![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog, order and inventory services; order-service keeps carts in Redis and publishes OrderCreated to Kafka through an outbox, inventory-service reserves the stock and publishes StockReserved, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
 
 The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step. To change the
 diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again as `docs/architecture.png`.
@@ -15,13 +15,14 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 |---|---|
 | Hexagonal layout (domain, application ports, adapters in/out) | every service: `domain`, `application`, `adapter/in`, `adapter/out` |
 | Database per service | `infra/postgres/init.sql`, one Flyway migration per service |
-| Transactional outbox | Both services: `JdbcOrders` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
-| Event-driven saga (choreography) over Kafka | `OrderCreated` -> payment -> `PaymentCompleted` (order `PAID`) or `PaymentDeclined` (order `PAYMENT_DECLINED`) |
-| Saga compensation | Cancelling a paid order, or a payment arriving after cancellation, sends `RefundRequested`; payment-service refunds. `OrderService.cancel` / `paymentCompleted` |
-| Idempotent consumer | `payment-service` `PaymentService.payFor` + unique `order_id` in `V1__payment.sql`; `refund` and the order status changes are safe to repeat |
+| Transactional outbox | Order, inventory and payment: `JdbcOrders`, `OutboxInventoryEvents` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
+| Event-driven saga (choreography) over Kafka | `OrderCreated` -> inventory -> `StockReserved` -> payment -> `PaymentCompleted` (order `PAID`) or `PaymentDeclined` (order `PAYMENT_DECLINED`); or `StockRejected` (order `OUT_OF_STOCK`, nothing charged) |
+| Saga compensation | A declined payment or a cancellation (`OrderCancelled`) puts the stock back (`InventoryService.release`). Cancelling a paid order, or a payment arriving after cancellation, also sends `RefundRequested`; payment-service refunds. `OrderService.cancel` / `paymentCompleted` |
+| Idempotent consumer | `PaymentService.payFor` + unique `order_id` in `V1__payment.sql`; one `reservation` row per order in inventory, so events about an order are safe to repeat or arrive in any order (a cancellation before the reservation leaves a marker, and nothing is reserved later); `refund` and the order status changes are safe to repeat |
+| Pessimistic locking | `JdbcStock.lockAvailable` locks the stock rows (`FOR UPDATE`, in product id order to avoid deadlocks), so two orders cannot both take the last item |
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
-| Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order and payment |
-| Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog and order |
+| Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order, inventory and payment |
+| Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog, order and inventory |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
@@ -42,14 +43,14 @@ shows which parts of it MyShoppingCart runs today.
 |---|---|---|
 | Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
 | Keycloak | Included, dev mode, realm imported at start | One realm, one public client, one test user |
-| Spring Boot 3 / Java 21 services | Catalog, Order, Payment | Browsing, ordering and payment |
+| Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment | Browsing, ordering, stock and payment |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
 | Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
 | GitHub Actions | Included: `.github/workflows/ci.yml` builds and tests | No image publishing or deployment |
 | NGINX, Spring Cloud Gateway | Not included | Kong is the single entry point |
-| Search, Inventory, Customer services | Not yet built | OpenSearch comes with search |
+| Search, Customer services | Not yet built | OpenSearch comes with search |
 | Recommender (AI) | Not yet built | Needs a model and product data |
 | OpenSearch, Ceph | Not yet built | Needed with the search and product media features |
 | HashiCorp Vault | Not included | Test credentials come from a local `.env` file instead |
@@ -59,7 +60,11 @@ shows which parts of it MyShoppingCart runs today.
 ## Current limitations
 
 - An order holds up to 20 products. Prices are looked up one product at a time at checkout.
-- Stock is not checked or reserved: there is no inventory service yet.
+- Stock is reserved when the order is placed, before payment. Nothing restocks products yet:
+  stock only comes back from declined or cancelled orders. Change it in the `inventory`
+  database's `stock` table.
+- If you started the stack before inventory was added, its database volume has no `inventory`
+  database. Run `docker compose down -v` once.
 - Checkout places the order, then empties the cart. If Redis fails between the two, the order
   stands and the cart is emptied the next time the customer views, changes or checks out the
   cart; checking out again returns the same order.
@@ -93,8 +98,9 @@ bash scripts/smoke.sh
 
 The script signs in as the test user and checks these journeys through Kong: an order that is
 paid, an order above the card limit that is declined, a paid order that is cancelled and
-refunded, the list of the customer's orders, and a cart of two products checked out as one
-order. The main steps by hand:
+refunded, the list of the customer's orders, a cart of two products checked out as one
+order, an order sent twice with one `Idempotency-Key`, and an order for more than is in stock.
+After each step it checks the stock went down or came back. The main steps by hand:
 
 ```bash
 source .env
@@ -106,6 +112,12 @@ TOKEN=$(curl -s -X POST http://localhost:8000/realms/shop/protocol/openid-connec
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/products
+```
+
+How many of each product are left (`/stock/<productId>` for one):
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/stock
 ```
 
 Put products in your cart. `PUT` sets the quantity (1 to 99), so sending it again changes the
@@ -136,7 +148,8 @@ curl -s -X POST http://localhost:8000/orders -H "Authorization: Bearer $TOKEN" -
 ```
 
 Either way the response contains the order `id`, its `lines` with the price of each product,
-the `total` and status `PENDING`. A moment later:
+the `total` and status `PENDING`. Inventory then reserves the stock and payment charges the
+order. A moment later:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>
@@ -148,15 +161,17 @@ shows status `PAID`. All of your orders, newest first (`?limit=` takes 1 to 100,
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders
 ```
 
-To cancel an order, which also refunds its payment:
+To cancel an order, which puts its stock back and refunds its payment:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>/cancel
 ```
 
 An order of 5 Espresso Machines (`11111111-1111-1111-1111-111111111111`, total 1245.00) ends as
-`PAYMENT_DECLINED`. A declined or already cancelled order cannot be cancelled (`409`). Without the
-`Authorization` header every call returns `401`.
+`PAYMENT_DECLINED`, and the machines go back in stock. An order for more Espresso Machines than
+`/stock` shows (25 at the start) ends as `OUT_OF_STOCK` without being charged. A declined, out of
+stock or already cancelled order cannot be cancelled (`409`). Without the `Authorization` header
+every call returns `401`.
 
 ### See the traces
 
@@ -165,11 +180,13 @@ Open http://localhost:3000 (Grafana, no sign-in needed), go to **Explore**, choo
 
 - `{name="POST /orders"}` – the HTTP request: order-service, its call to catalog-service, and
   the inserts into `orders` and `outbox`.
-- `{name="order-created publish"}` – the asynchronous leg: the outbox relay publishing to Kafka,
-  payment-service consuming and paying, and order-service marking the order paid.
+- `{name="order-created publish"}` – the asynchronous leg: the outbox relay publishing to Kafka
+  and inventory-service reserving the stock. Inventory and payment publish through their own
+  outboxes, so payment and the order becoming `PAID` appear as further traces
+  (`{name="stock-reserved publish"}`, `{name="payment-completed publish"}`).
 
 They are separate traces because the outbox table does not carry the trace context from the
-request to the relay. The **Loki** data source has the logs of all three services and
+request to the relay. The **Loki** data source has the logs of all four services and
 **Prometheus** has their JVM, HTTP and Kafka metrics.
 
 ### Try the circuit breaker
@@ -211,16 +228,21 @@ mvn verify
 
 This runs the unit tests and the integration tests against real PostgreSQL, Kafka and Redis containers:
 
-- `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
+- `OrderFlowIntegrationTest`: paid, declined, out of stock, cancel with refund and the
+  cancellation sent to inventory, payment after cancellation,
   only the owner can cancel, each customer lists only their own orders, a two-product cart checked
   out as one order, a cart that could not be emptied not being ordered twice, a repeated
   `Idempotency-Key` placing one order and refusing different items, the cart refusing
   unknown products and bad quantities, unreadable message to
   the dead-letter topic.
-- `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
+- `InventoryFlowIntegrationTest`: a duplicated `OrderCreated` reserves stock once and is passed on
+  to payment, an order for more than is in stock reserves nothing, a declined payment puts the
+  stock back once, a cancellation arriving before the order means nothing is reserved, `/stock`
+  needs a token, unreadable message to the dead-letter topic.
+- `PaymentFlowIntegrationTest`: a duplicated `StockReserved` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
 
-The two services are tested separately; the full round trip through both is what
+Each service is tested on its own; the full round trip through all of them is what
 `scripts/smoke.sh` checks against the running stack.
 
 ## Run it on GitHub

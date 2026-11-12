@@ -23,6 +23,9 @@ class KafkaConfig {
         return new KafkaAdmin.NewTopics(
                 TopicBuilder.name("order-created").build(),
                 TopicBuilder.name("refund-requested").build(),
+                TopicBuilder.name("order-cancelled").build(),
+                TopicBuilder.name("stock-rejected").build(),
+                TopicBuilder.name("stock-rejected-dlt").build(),
                 TopicBuilder.name("payment-completed").build(),
                 TopicBuilder.name("payment-completed-dlt").build(),
                 TopicBuilder.name("payment-declined").build(),

@@ -60,6 +60,15 @@ class OrderTest {
     }
 
     @Test
+    void onlyAPendingOrderRunsOutOfStockAndThenCannotBeCancelled() {
+        Order outOfStock = pending().outOfStock();
+
+        assertThat(outOfStock.status()).isEqualTo(OrderStatus.OUT_OF_STOCK);
+        assertThat(pending().paid().outOfStock().status()).isEqualTo(OrderStatus.PAID);
+        assertThatThrownBy(outOfStock::cancelled).isInstanceOf(OrderNotCancellableException.class);
+    }
+
+    @Test
     void pendingAndPaidOrdersCanBeCancelled() {
         assertThat(pending().cancelled().status()).isEqualTo(OrderStatus.CANCELLED);
         assertThat(pending().paid().cancelled().status()).isEqualTo(OrderStatus.CANCELLED);

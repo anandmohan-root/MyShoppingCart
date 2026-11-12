@@ -119,6 +119,17 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       OTEL_SERVICE_NAME: order-service
 
+  inventory-service:
+    <<: *service
+    build:
+      context: .
+      args:
+        SERVICE: inventory-service
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/inventory
+      OTEL_SERVICE_NAME: inventory-service
+
   payment-service:
     <<: *service
     build:

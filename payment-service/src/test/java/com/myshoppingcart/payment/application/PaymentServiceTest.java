@@ -52,7 +52,7 @@ class PaymentServiceTest {
             new BigDecimal("1000.00"));
 
     @Test
-    void duplicateOrderCreatedIsPaidAndPublishedOnce() {
+    void duplicateStockReservedIsPaidAndPublishedOnce() {
         UUID orderId = UUID.randomUUID();
 
         service.payFor(orderId, new BigDecimal("37.50"));

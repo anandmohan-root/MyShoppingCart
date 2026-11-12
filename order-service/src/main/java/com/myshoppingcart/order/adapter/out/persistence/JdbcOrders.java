@@ -27,9 +27,17 @@ class JdbcOrders implements Orders {
 
     static final String ORDER_CREATED_TOPIC = "order-created";
     static final String REFUND_REQUESTED_TOPIC = "refund-requested";
+    static final String ORDER_CANCELLED_TOPIC = "order-cancelled";
 
-    /** The OrderCreated message contract, as consumed by payment-service. */
-    record OrderCreated(UUID orderId, String customerId, BigDecimal amount) {
+    /** The OrderCreated message contract, as consumed by inventory-service. */
+    record OrderCreated(UUID orderId, String customerId, BigDecimal amount, List<Line> lines) {
+
+        record Line(UUID productId, int quantity) {
+        }
+    }
+
+    /** The OrderCancelled message contract, as consumed by inventory-service. */
+    record OrderCancelled(UUID orderId) {
     }
 
     /** The RefundRequested message contract, as consumed by payment-service. */
@@ -83,7 +91,8 @@ class JdbcOrders implements Orders {
         jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
                 .param("topic", ORDER_CREATED_TOPIC)
                 .param("key", order.id().toString())
-                .param("payload", toJson(new OrderCreated(order.id(), order.customerId(), order.total())))
+                .param("payload", toJson(new OrderCreated(order.id(), order.customerId(), order.total(),
+                        order.lines().stream().map(l -> new OrderCreated.Line(l.productId(), l.quantity())).toList())))
                 .update();
     }
 
@@ -165,10 +174,19 @@ class JdbcOrders implements Orders {
 
     @Override
     public void requestRefund(Order order) {
+        outbox(REFUND_REQUESTED_TOPIC, order, new RefundRequested(order.id(), order.total()));
+    }
+
+    @Override
+    public void announceCancellation(Order order) {
+        outbox(ORDER_CANCELLED_TOPIC, order, new OrderCancelled(order.id()));
+    }
+
+    private void outbox(String topic, Order order, Object event) {
         jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
-                .param("topic", REFUND_REQUESTED_TOPIC)
+                .param("topic", topic)
                 .param("key", order.id().toString())
-                .param("payload", toJson(new RefundRequested(order.id(), order.total())))
+                .param("payload", toJson(event))
                 .update();
     }
 

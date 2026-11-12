@@ -23,7 +23,7 @@ public class PaymentService {
     }
 
     /**
-     * Idempotent consumer: a redelivered OrderCreated finds the payment already stored and does
+     * Idempotent consumer: a redelivered StockReserved finds the payment already stored and does
      * nothing. The payment and its PaymentCompleted or PaymentDeclined event commit together.
      */
     @Transactional

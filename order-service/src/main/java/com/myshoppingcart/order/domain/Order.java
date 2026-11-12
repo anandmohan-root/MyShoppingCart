@@ -13,6 +13,7 @@ import java.util.UUID;
  * <pre>
  * PENDING --payment completed--> PAID
  * PENDING --payment declined---> PAYMENT_DECLINED
+ * PENDING --stock rejected-----> OUT_OF_STOCK
  * PENDING or PAID --customer---> CANCELLED (a paid order is refunded)
  * </pre>
  */
@@ -50,6 +51,11 @@ public record Order(UUID id, String customerId, List<OrderLine> lines, BigDecima
     /** Only a pending order is declined; for any other status the decline changes nothing here. */
     public Order declined() {
         return status == OrderStatus.PENDING ? withStatus(OrderStatus.PAYMENT_DECLINED) : this;
+    }
+
+    /** Only a pending order runs out of stock; for any other status the rejection changes nothing here. */
+    public Order outOfStock() {
+        return status == OrderStatus.PENDING ? withStatus(OrderStatus.OUT_OF_STOCK) : this;
     }
 
     public boolean canBeCancelled() {
