@@ -1,0 +1,30 @@
+{
+  "realm": "shop",
+  "enabled": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "shop-cli",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "${SHOP_USER}",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "${SHOP_USER}@example.com",
+      "firstName": "Test",
+      "lastName": "Shopper",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${SHOP_USER_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

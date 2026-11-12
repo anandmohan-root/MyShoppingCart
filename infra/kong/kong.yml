@@ -1,0 +1,25 @@
+# Kong in DB-less mode: this file is the whole gateway configuration.
+# Kong only routes here; each service validates the JWT itself.
+_format_version: "3.0"
+
+services:
+  - name: keycloak
+    url: http://keycloak:8080
+    routes:
+      - name: keycloak
+        paths: ["/realms"]
+        strip_path: false
+
+  - name: catalog
+    url: http://catalog-service:8080
+    routes:
+      - name: catalog
+        paths: ["/products"]
+        strip_path: false
+
+  - name: orders
+    url: http://order-service:8080
+    routes:
+      - name: orders
+        paths: ["/orders"]
+        strip_path: false

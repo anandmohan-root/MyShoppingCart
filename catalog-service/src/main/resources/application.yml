@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: catalog-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/catalog
+    username: shop
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Keys are fetched from Keycloak inside the Docker network; the issuer is the
+          # public URL (through Kong) that clients used to get the token.
+          jwk-set-uri: http://keycloak:8080/realms/shop/protocol/openid-connect/certs
+          issuer-uri: http://localhost:8000/realms/shop

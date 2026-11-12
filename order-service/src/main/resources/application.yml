@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: shop
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+  http:
+    client:
+      connect-timeout: 1s
+      read-timeout: 2s
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Keys are fetched from Keycloak inside the Docker network; the issuer is the
+          # public URL (through Kong) that clients used to get the token.
+          jwk-set-uri: http://keycloak:8080/realms/shop/protocol/openid-connect/certs
+          issuer-uri: http://localhost:8000/realms/shop
+
+catalog:
+  url: http://catalog-service:8080
+
+resilience4j:
+  retry:
+    instances:
+      catalog:
+        max-attempts: 3
+        wait-duration: 200ms
+  circuitbreaker:
+    instances:
+      catalog:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s

@@ -1,0 +1,2 @@
+# Shell scripts and container config must keep LF line endings, also when checked out on Windows.
+* text=auto eol=lf
