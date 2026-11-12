@@ -1,10 +1,10 @@
 # MyShoppingCart
 
 MyShoppingCart is an online shopping application built on the on-premises shopping platform
-architecture: a product catalog, ordering and payment, with sign-in through Keycloak and every
+architecture: a product catalog, a shopping cart, ordering and payment, with sign-in through Keycloak and every
 request entering through Kong. It runs in Docker containers and starts with one Docker Compose command.
 
-![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog and order services; order-service publishes OrderCreated to Kafka through an outbox, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
+![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog and order services; order-service keeps carts in Redis and publishes OrderCreated to Kafka through an outbox, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
 
 The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step. To change the
 diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again as `docs/architecture.png`.
@@ -22,6 +22,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog and order |
+| Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
 | Timeout, retry, circuit breaker | `order-service` `CatalogClient` + `resilience4j` / `spring.http.client` in its `application.yml` |
@@ -43,19 +44,23 @@ shows which parts of it MyShoppingCart runs today.
 | Spring Boot 3 / Java 21 services | Catalog, Order, Payment | Browsing, ordering and payment |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
+| Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
 | GitHub Actions | Included: `.github/workflows/ci.yml` builds and tests | No image publishing or deployment |
 | NGINX, Spring Cloud Gateway | Not included | Kong is the single entry point |
-| Search, Cart, Inventory, Customer services | Not yet built | Redis and OpenSearch come with them |
+| Search, Inventory, Customer services | Not yet built | OpenSearch comes with search |
 | Recommender (AI) | Not yet built | Needs a model and product data |
-| Redis, OpenSearch, Ceph | Not yet built | Needed with the cart, search and product media features |
+| OpenSearch, Ceph | Not yet built | Needed with the search and product media features |
 | HashiCorp Vault | Not included | Test credentials come from a local `.env` file instead |
 | OpenShift, Istio | Not included | Docker Compose replaces the cluster; no mesh, no mTLS between services |
 | Harbor, Argo CD, Terraform, SonarQube | Not included | Images are built locally; there is nothing to deploy to |
 
 ## Current limitations
 
-- An order has one product and a quantity. There are no order lines.
+- An order holds up to 20 products. Prices are looked up one product at a time at checkout.
+- Stock is not checked or reserved: there is no inventory service yet.
+- Checkout places the order, then empties the cart. If Redis fails between the two, the order
+  stands and the cart keeps its products, so checking out again would place a second order.
 - There is no payment provider. A charge above `payment.decline-above` (1000.00, in payment-service's
   `application.yml`) is declined; anything else succeeds. A refund only changes the payment's status.
 - Nothing reads the dead-letter topics yet; inspect them with Kafka's console consumer.
@@ -82,9 +87,10 @@ The first run downloads images and builds the services, which takes several minu
 bash scripts/smoke.sh
 ```
 
-The script signs in as the test user and checks three journeys through Kong: an order that is
+The script signs in as the test user and checks these journeys through Kong: an order that is
 paid, an order above the card limit that is declined, a paid order that is cancelled and
-refunded, and the list of the customer's orders. The main steps by hand:
+refunded, the list of the customer's orders, and a cart of two products checked out as one
+order. The main steps by hand:
 
 ```bash
 source .env
@@ -98,11 +104,32 @@ TOKEN=$(curl -s -X POST http://localhost:8000/realms/shop/protocol/openid-connec
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/products
 ```
 
+Put products in your cart. `PUT` sets the quantity (1 to 99), so sending it again changes the
+quantity instead of adding a second line:
+
 ```bash
-curl -s -X POST http://localhost:8000/orders -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"productId":"33333333-3333-3333-3333-333333333333","quantity":2}'
+curl -s -X PUT http://localhost:8000/cart/items/33333333-3333-3333-3333-333333333333 -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"quantity":2}'
 ```
 
-The response contains the order `id` with status `PENDING`. A moment later:
+```bash
+curl -s -X PUT http://localhost:8000/cart/items/22222222-2222-2222-2222-222222222222 -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"quantity":1}'
+```
+
+`GET /cart` shows the cart, `DELETE /cart/items/<productId>` removes one product and
+`DELETE /cart` empties it. Check out, which places one order for the whole cart and empties it:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/cart/checkout
+```
+
+An order can also be placed directly, without the cart:
+
+```bash
+curl -s -X POST http://localhost:8000/orders -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"items":[{"productId":"33333333-3333-3333-3333-333333333333","quantity":2}]}'
+```
+
+Either way the response contains the order `id`, its `lines` with the price of each product,
+the `total` and status `PENDING`. A moment later:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/orders/<id>
@@ -144,7 +171,7 @@ request to the relay. The **Loki** data source has the logs of all three service
 docker compose stop catalog-service
 ```
 
-Place orders again (the `curl -X POST` above). The first one returns `503` after a few seconds
+Place orders again (the `curl -X POST .../orders` above). The first one returns `503` after a few seconds
 of timeouts and retries. That opens the circuit, so for the next ten seconds a `503` comes back
 at once, without calling the catalog; after that the breaker lets a few trial calls through.
 Start the catalog again and orders work once it is up:
@@ -159,7 +186,7 @@ docker compose start catalog-service
 docker compose down -v
 ```
 
-`-v` also removes the database and Kafka data.
+`-v` also removes the database and Kafka data. Carts are lost whenever the Redis container is removed.
 
 ## Build and test without the stack
 
@@ -169,10 +196,11 @@ Needs Java 21, Maven and a running Docker (for Testcontainers).
 mvn verify
 ```
 
-This runs the unit tests and the integration tests against real PostgreSQL and Kafka containers:
+This runs the unit tests and the integration tests against real PostgreSQL, Kafka and Redis containers:
 
 - `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
-  only the owner can cancel, each customer lists only their own orders, unreadable message to
+  only the owner can cancel, each customer lists only their own orders, a two-product cart checked
+  out as one order, the cart refusing unknown products and bad quantities, unreadable message to
   the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.

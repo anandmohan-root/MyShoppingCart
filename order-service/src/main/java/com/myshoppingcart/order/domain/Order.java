@@ -3,10 +3,12 @@ package com.myshoppingcart.order.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
 
 /**
- * A single-product order. Multi-line orders are not supported yet.
+ * An order for one or more products; each product appears on one line only.
  *
  * <pre>
  * PENDING --payment completed--> PAID
@@ -14,17 +16,30 @@ import java.util.UUID;
  * PENDING or PAID --customer---> CANCELLED (a paid order is refunded)
  * </pre>
  */
-public record Order(UUID id, String customerId, UUID productId, int quantity, BigDecimal total, OrderStatus status,
+public record Order(UUID id, String customerId, List<OrderLine> lines, BigDecimal total, OrderStatus status,
                     Instant createdAt) {
 
-    public static Order place(String customerId, UUID productId, int quantity, BigDecimal unitPrice) {
-        if (quantity < 1) {
-            throw new IllegalArgumentException("quantity must be at least 1");
+    /** Each line costs one catalog lookup when the order is placed, so the number of lines is capped. */
+    public static final int MAX_LINES = 20;
+
+    public Order {
+        lines = List.copyOf(lines);
+    }
+
+    public static Order place(String customerId, List<OrderLine> lines) {
+        if (lines.isEmpty()) {
+            throw new IllegalArgumentException("an order needs at least one line");
         }
-        BigDecimal total = unitPrice.multiply(BigDecimal.valueOf(quantity));
+        if (lines.size() > MAX_LINES) {
+            throw new IllegalArgumentException("an order can have at most " + MAX_LINES + " lines");
+        }
+        if (new HashSet<>(lines.stream().map(OrderLine::productId).toList()).size() != lines.size()) {
+            throw new IllegalArgumentException("each product can appear on one line only");
+        }
+        BigDecimal total = lines.stream().map(OrderLine::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         // PostgreSQL stores microseconds; truncating keeps the returned order equal to the stored one.
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        return new Order(UUID.randomUUID(), customerId, productId, quantity, total, OrderStatus.PENDING, now);
+        return new Order(UUID.randomUUID(), customerId, lines, total, OrderStatus.PENDING, now);
     }
 
     /** Only a pending order becomes paid; for any other status the payment changes nothing here. */
@@ -49,6 +64,6 @@ public record Order(UUID id, String customerId, UUID productId, int quantity, Bi
     }
 
     private Order withStatus(OrderStatus newStatus) {
-        return new Order(id, customerId, productId, quantity, total, newStatus, createdAt);
+        return new Order(id, customerId, lines, total, newStatus, createdAt);
     }
 }

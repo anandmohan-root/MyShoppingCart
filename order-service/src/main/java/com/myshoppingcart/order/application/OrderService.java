@@ -1,6 +1,7 @@
 package com.myshoppingcart.order.application;
 
 import com.myshoppingcart.order.domain.Order;
+import com.myshoppingcart.order.domain.OrderLine;
 import com.myshoppingcart.order.domain.OrderStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,11 +24,20 @@ public class OrderService {
         this.catalog = catalog;
     }
 
-    public Order place(String customerId, UUID productId, int quantity) {
-        BigDecimal unitPrice = catalog.priceOf(productId).orElseThrow(() -> new UnknownProductException(productId));
-        Order order = Order.place(customerId, productId, quantity, unitPrice);
+    public Order place(String customerId, List<OrderItem> items) {
+        if (items.size() > Order.MAX_LINES) {
+            throw new IllegalArgumentException("an order can have at most " + Order.MAX_LINES + " lines");
+        }
+        List<OrderLine> lines = items.stream()
+                .map(item -> new OrderLine(item.productId(), item.quantity(), priceOf(item.productId())))
+                .toList();
+        Order order = Order.place(customerId, lines);
         orders.create(order);
         return order;
+    }
+
+    private BigDecimal priceOf(UUID productId) {
+        return catalog.priceOf(productId).orElseThrow(() -> new UnknownProductException(productId));
     }
 
     /** The caller's own orders, newest first. {@code limit} is kept between 1 and {@link #MAX_LIST}. */

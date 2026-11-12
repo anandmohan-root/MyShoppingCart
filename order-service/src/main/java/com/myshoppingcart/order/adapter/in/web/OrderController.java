@@ -1,17 +1,12 @@
 package com.myshoppingcart.order.adapter.in.web;
 
-import com.myshoppingcart.order.application.ConcurrentOrderChangeException;
+import com.myshoppingcart.order.application.OrderItem;
 import com.myshoppingcart.order.application.OrderService;
-import com.myshoppingcart.order.application.UnknownProductException;
 import com.myshoppingcart.order.domain.Order;
-import com.myshoppingcart.order.domain.OrderNotCancellableException;
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,15 +14,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestClientException;
 
 import java.util.List;
 import java.util.UUID;
 
+/** The caller's own orders. Errors are mapped to HTTP statuses in {@link ApiErrors}. */
 @RestController
 class OrderController {
 
-    record PlaceOrderRequest(UUID productId, int quantity) {
+    record PlaceOrderRequest(List<OrderItem> items) {
     }
 
     private final OrderService orders;
@@ -39,7 +34,7 @@ class OrderController {
     @PostMapping("/orders")
     @ResponseStatus(HttpStatus.CREATED)
     Order place(@RequestBody PlaceOrderRequest request, @AuthenticationPrincipal Jwt jwt) {
-        return orders.place(jwt.getSubject(), request.productId(), request.quantity());
+        return orders.place(jwt.getSubject(), request.items() == null ? List.of() : request.items());
     }
 
     /** The caller's own orders, newest first; at most {@code limit} of them (1 to 100). */
@@ -58,21 +53,5 @@ class OrderController {
     @PostMapping("/orders/{id}/cancel")
     ResponseEntity<Order> cancel(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.of(orders.cancel(id, jwt.getSubject()));
-    }
-
-    @ExceptionHandler({OrderNotCancellableException.class, ConcurrentOrderChangeException.class})
-    ProblemDetail conflict(RuntimeException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
-    }
-
-    @ExceptionHandler({UnknownProductException.class, IllegalArgumentException.class})
-    ProblemDetail badRequest(RuntimeException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
-    }
-
-    /** Catalog is down, slow, or its circuit breaker is open. */
-    @ExceptionHandler({RestClientException.class, CallNotPermittedException.class})
-    ProblemDetail catalogUnavailable(RuntimeException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, "catalog is unavailable, try again later");
     }
 }

@@ -4,6 +4,9 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/orders
     username: shop
+  data:
+    redis:
+      host: localhost
   kafka:
     bootstrap-servers: localhost:9092
     consumer:

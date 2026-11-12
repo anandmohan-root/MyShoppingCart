@@ -16,6 +16,8 @@ import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -33,13 +35,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Order side of the order-to-payment saga against real PostgreSQL and Kafka. The tests answer
+ * Cart, orders and the order side of the order-to-payment saga against real PostgreSQL, Kafka
+ * and Redis. The tests answer
  * with payment events themselves, standing in for payment-service.
  */
 @SpringBootTest
@@ -55,7 +60,12 @@ class OrderFlowIntegrationTest {
     @ServiceConnection
     static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.9.1");
 
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine").withExposedPorts(6379);
+
     private static final UUID PRODUCT = UUID.randomUUID();
+    private static final UUID OTHER_PRODUCT = UUID.randomUUID();
 
     @Autowired
     MockMvc mvc;
@@ -69,6 +79,7 @@ class OrderFlowIntegrationTest {
     @BeforeEach
     void priceTheProduct() {
         when(catalog.priceOf(PRODUCT)).thenReturn(Optional.of(new BigDecimal("18.75")));
+        when(catalog.priceOf(OTHER_PRODUCT)).thenReturn(Optional.of(new BigDecimal("249.00")));
     }
 
     @Test
@@ -76,9 +87,10 @@ class OrderFlowIntegrationTest {
         String response = mvc.perform(post("/orders")
                         .with(jwt().jwt(j -> j.subject("alice")))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"productId\":\"%s\",\"quantity\":2}".formatted(PRODUCT)))
+                        .content(itemsJson(PRODUCT, 2)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.lines[0].unitPrice").value(18.75))
                 .andExpect(jsonPath("$.total").value(37.5))
                 .andReturn().getResponse().getContentAsString();
         String orderId = JsonPath.read(response, "$.id");
@@ -161,6 +173,46 @@ class OrderFlowIntegrationTest {
     }
 
     @Test
+    void checkoutTurnsTheCartIntoOneOrderAndEmptiesIt() throws Exception {
+        setInCart("erin", PRODUCT, 1).andExpect(status().isOk());
+        setInCart("erin", OTHER_PRODUCT, 1).andExpect(status().isOk());
+        // Setting the quantity again replaces it rather than adding a second line.
+        setInCart("erin", PRODUCT, 2).andExpect(jsonPath("$.items.length()").value(2));
+
+        mvc.perform(get("/cart").with(jwt().jwt(j -> j.subject("frank"))))
+                .andExpect(jsonPath("$.items.length()").value(0));
+
+        String response = mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("erin"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.lines.length()").value(2))
+                .andExpect(jsonPath("$.total").value(286.5))
+                .andReturn().getResponse().getContentAsString();
+        String orderId = JsonPath.read(response, "$.id");
+
+        String orderCreated = readFor("order-created", orderId, 1).getFirst();
+        assertThat(JsonPath.<Double>read(orderCreated, "$.amount")).isEqualTo(286.5);
+        mvc.perform(get("/orders/{id}", orderId).with(jwt().jwt(j -> j.subject("erin"))))
+                .andExpect(jsonPath("$.lines.length()").value(2));
+        mvc.perform(get("/cart").with(jwt().jwt(j -> j.subject("erin"))))
+                .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("erin"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cartRejectsUnknownProductsAndBadQuantities() throws Exception {
+        UUID unknown = UUID.randomUUID();
+        when(catalog.priceOf(unknown)).thenReturn(Optional.empty());
+
+        setInCart("gina", unknown, 1).andExpect(status().isBadRequest());
+        setInCart("gina", PRODUCT, 0).andExpect(status().isBadRequest());
+
+        setInCart("gina", PRODUCT, 1).andExpect(status().isOk());
+        mvc.perform(delete("/cart/items/{id}", PRODUCT).with(jwt().jwt(j -> j.subject("gina"))))
+                .andExpect(jsonPath("$.items.length()").value(0));
+    }
+
+    @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         String key = UUID.randomUUID().toString();
         kafkaTemplate.send("payment-completed", key, "this is not JSON");
@@ -176,10 +228,21 @@ class OrderFlowIntegrationTest {
         String response = mvc.perform(post("/orders")
                         .with(jwt().jwt(j -> j.subject(customer)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"productId\":\"%s\",\"quantity\":1}".formatted(PRODUCT)))
+                        .content(itemsJson(PRODUCT, 1)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(response, "$.id");
+    }
+
+    private ResultActions setInCart(String customer, UUID productId, int quantity) throws Exception {
+        return mvc.perform(put("/cart/items/{id}", productId)
+                .with(jwt().jwt(j -> j.subject(customer)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"quantity\":%d}".formatted(quantity)));
+    }
+
+    private static String itemsJson(UUID productId, int quantity) {
+        return "{\"items\":[{\"productId\":\"%s\",\"quantity\":%d}]}".formatted(productId, quantity);
     }
 
     private void send(String topic, String orderId) {

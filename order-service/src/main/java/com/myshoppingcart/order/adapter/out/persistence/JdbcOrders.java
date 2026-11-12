@@ -2,6 +2,7 @@ package com.myshoppingcart.order.adapter.out.persistence;
 
 import com.myshoppingcart.order.application.Orders;
 import com.myshoppingcart.order.domain.Order;
+import com.myshoppingcart.order.domain.OrderLine;
 import com.myshoppingcart.order.domain.OrderStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,9 +13,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Repository
 class JdbcOrders implements Orders {
@@ -43,16 +47,27 @@ class JdbcOrders implements Orders {
     @Transactional
     public void create(Order order) {
         jdbc.sql("""
-                        INSERT INTO orders (id, customer_id, product_id, quantity, total, status, created_at)
-                        VALUES (:id, :customerId, :productId, :quantity, :total, :status, :createdAt)""")
+                        INSERT INTO orders (id, customer_id, total, status, created_at)
+                        VALUES (:id, :customerId, :total, :status, :createdAt)""")
                 .param("id", order.id())
                 .param("customerId", order.customerId())
-                .param("productId", order.productId())
-                .param("quantity", order.quantity())
                 .param("total", order.total())
                 .param("status", order.status().name())
                 .param("createdAt", Timestamp.from(order.createdAt()))
                 .update();
+
+        for (int i = 0; i < order.lines().size(); i++) {
+            OrderLine line = order.lines().get(i);
+            jdbc.sql("""
+                            INSERT INTO order_line (order_id, line_no, product_id, quantity, unit_price)
+                            VALUES (:orderId, :lineNo, :productId, :quantity, :unitPrice)""")
+                    .param("orderId", order.id())
+                    .param("lineNo", i + 1)
+                    .param("productId", line.productId())
+                    .param("quantity", line.quantity())
+                    .param("unitPrice", line.unitPrice())
+                    .update();
+        }
 
         jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
                 .param("topic", ORDER_CREATED_TOPIC)
@@ -61,32 +76,60 @@ class JdbcOrders implements Orders {
                 .update();
     }
 
-    private static final String COLUMNS = "id, customer_id, product_id, quantity, total, status, created_at";
+    private static final String COLUMNS = "id, customer_id, total, status, created_at";
 
-    private static final RowMapper<Order> MAPPER = (rs, n) -> new Order(
+    /** An order row before its lines are attached. */
+    private record OrderRow(UUID id, String customerId, BigDecimal total, OrderStatus status, Instant createdAt) {
+    }
+
+    private record LineRow(UUID orderId, OrderLine line) {
+    }
+
+    private static final RowMapper<OrderRow> ORDER_MAPPER = (rs, n) -> new OrderRow(
             rs.getObject("id", UUID.class),
             rs.getString("customer_id"),
-            rs.getObject("product_id", UUID.class),
-            rs.getInt("quantity"),
             rs.getBigDecimal("total"),
             OrderStatus.valueOf(rs.getString("status")),
             rs.getTimestamp("created_at").toInstant());
 
+    private static final RowMapper<LineRow> LINE_MAPPER = (rs, n) -> new LineRow(
+            rs.getObject("order_id", UUID.class),
+            new OrderLine(rs.getObject("product_id", UUID.class), rs.getInt("quantity"), rs.getBigDecimal("unit_price")));
+
     @Override
     public Optional<Order> findById(UUID id) {
-        return jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE id = :id")
+        return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE id = :id")
                 .param("id", id)
-                .query(MAPPER)
-                .optional();
+                .query(ORDER_MAPPER)
+                .list())
+                .stream().findFirst();
     }
 
     @Override
     public List<Order> findByCustomer(String customerId, int limit) {
-        return jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE customer_id = :customerId ORDER BY created_at DESC LIMIT :limit")
+        return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE customer_id = :customerId ORDER BY created_at DESC LIMIT :limit")
                 .param("customerId", customerId)
                 .param("limit", limit)
-                .query(MAPPER)
-                .list();
+                .query(ORDER_MAPPER)
+                .list());
+    }
+
+    /** Loads the lines of all the given orders in one query, keeping the orders' sequence. */
+    private List<Order> withLines(List<OrderRow> rows) {
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, List<OrderLine>> lines = jdbc.sql("""
+                        SELECT order_id, product_id, quantity, unit_price FROM order_line
+                        WHERE order_id IN (:ids) ORDER BY order_id, line_no""")
+                .param("ids", rows.stream().map(OrderRow::id).toList())
+                .query(LINE_MAPPER)
+                .list().stream()
+                .collect(Collectors.groupingBy(LineRow::orderId,
+                        Collectors.mapping(LineRow::line, Collectors.toList())));
+        return rows.stream()
+                .map(r -> new Order(r.id(), r.customerId(), lines.getOrDefault(r.id(), List.of()), r.total(), r.status(), r.createdAt()))
+                .toList();
     }
 
     /** Compare-and-set on the status, so a concurrent change is detected instead of overwritten. */

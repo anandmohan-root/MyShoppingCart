@@ -53,6 +53,14 @@ services:
       interval: 5s
       retries: 20
 
+  # Shopping carts. Nothing else is kept here, so losing it only empties carts.
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
   kafka:
     image: apache/kafka:3.9.1
     environment:
@@ -90,6 +98,13 @@ services:
 
   order-service:
     <<: *service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     build:
       context: .
       args:
@@ -97,6 +112,7 @@ services:
     environment:
       <<: *service-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orders
+      SPRING_DATA_REDIS_HOST: redis
       OTEL_SERVICE_NAME: order-service
 
   payment-service:
