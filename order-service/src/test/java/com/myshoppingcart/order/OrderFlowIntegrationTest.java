@@ -181,6 +181,45 @@ class OrderFlowIntegrationTest {
     }
 
     @Test
+    void repeatingARequestWithTheSameIdempotencyKeyPlacesOneOrder() throws Exception {
+        String first = JsonPath.read(placeWithKey("jack", "key-1", itemsJson(PRODUCT, 2))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+
+        placeWithKey("jack", "key-1", itemsJson(PRODUCT, 2))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(first));
+
+        mvc.perform(get("/orders").with(jwt().jwt(j -> j.subject("jack"))))
+                .andExpect(jsonPath("$.length()").value(1));
+        assertThat(readFor("order-created", first, 1)).hasSize(1);
+    }
+
+    @Test
+    void anIdempotencyKeyCannotBeReusedForDifferentItems() throws Exception {
+        placeWithKey("kate", "key-1", itemsJson(PRODUCT, 1)).andExpect(status().isCreated());
+
+        placeWithKey("kate", "key-1", itemsJson(PRODUCT, 3)).andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void idempotencyKeysBelongToOneCustomer() throws Exception {
+        String leo = JsonPath.read(placeWithKey("leo", "shared-key", itemsJson(PRODUCT, 1))
+                .andReturn().getResponse().getContentAsString(), "$.id");
+
+        placeWithKey("mia", "shared-key", itemsJson(PRODUCT, 1))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(not(leo)))
+                .andExpect(jsonPath("$.customerId").value("mia"));
+    }
+
+    @Test
+    void blankOrOverlongIdempotencyKeyIsRejected() throws Exception {
+        placeWithKey("ned", " ", itemsJson(PRODUCT, 1)).andExpect(status().isBadRequest());
+        placeWithKey("ned", "k".repeat(101), itemsJson(PRODUCT, 1)).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void checkoutTurnsTheCartIntoOneOrderAndEmptiesIt() throws Exception {
         setInCart("erin", PRODUCT, 1).andExpect(status().isOk());
         setInCart("erin", OTHER_PRODUCT, 1).andExpect(status().isOk());
@@ -282,6 +321,14 @@ class OrderFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(response, "$.id");
+    }
+
+    private ResultActions placeWithKey(String customer, String key, String body) throws Exception {
+        return mvc.perform(post("/orders")
+                .with(jwt().jwt(j -> j.subject(customer)))
+                .header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
     }
 
     private ResultActions setInCart(String customer, UUID productId, int quantity) throws Exception {

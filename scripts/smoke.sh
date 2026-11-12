@@ -4,7 +4,8 @@
 #   2. an order above the card limit is declined,
 #   3. a paid order is cancelled and its payment refunded,
 #   4. the customer's orders are listed, newest first,
-#   5. a cart with two products is checked out as one paid order.
+#   5. a cart with two products is checked out as one paid order,
+#   6. an order sent twice with the same Idempotency-Key is placed once.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -99,4 +100,17 @@ CART=$(curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/cart")
 [ "$CART" = '{"items":[]}' ] || { echo "FAILED: the cart is not empty after checkout: $CART"; exit 1; }
 echo "  the cart is empty again"
 
-echo "OK: paid, declined, cancelled with refund, listed, and checked out from the cart"
+echo "6. Sending the same order twice with one Idempotency-Key ..."
+KEY="smoke-$(date +%s)-$RANDOM"
+order_with_key() {
+  curl -s --fail -X POST "$GATEWAY/orders" -H "Authorization: Bearer $TOKEN" \
+    -H "Idempotency-Key: $KEY" -H "Content-Type: application/json" \
+    -d "{\"items\":[{\"productId\":\"$COFFEE_BEANS\",\"quantity\":1}]}" | field id
+}
+FIRST=$(order_with_key)
+SECOND=$(order_with_key)
+[ "$FIRST" = "$SECOND" ] || { echo "FAILED: the repeated request placed a second order ($FIRST, $SECOND)"; exit 1; }
+echo "  both requests returned order $FIRST"
+expect_status "$FIRST" PAID
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, and placed once per key"

@@ -8,8 +8,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
@@ -29,10 +31,17 @@ public class OrderService {
     }
 
     /**
-     * Places an order checked out from the cart {@code cartId}. Throws
-     * {@link CartAlreadyOrderedException} if that cart already has an order.
+     * Places an order, at most once per {@code idempotencyKey} (null for no key). Repeating a key
+     * returns the order already placed under it, without pricing or storing anything; repeating
+     * it with different items throws {@link IdempotencyKeyReusedException}.
      */
-    public Order place(String customerId, List<OrderItem> items, UUID cartId) {
+    public Order place(String customerId, List<OrderItem> items, String idempotencyKey) {
+        if (idempotencyKey != null) {
+            Optional<Order> existing = orders.findByIdempotencyKey(customerId, idempotencyKey);
+            if (existing.isPresent()) {
+                return sameItems(existing.get(), items);
+            }
+        }
         if (items.size() > Order.MAX_LINES) {
             throw new IllegalArgumentException("an order can have at most " + Order.MAX_LINES + " lines");
         }
@@ -40,8 +49,24 @@ public class OrderService {
                 .map(item -> new OrderLine(item.productId(), item.quantity(), priceOf(item.productId())))
                 .toList();
         Order order = Order.place(customerId, lines);
-        orders.create(order, cartId);
+        try {
+            orders.create(order, idempotencyKey);
+        } catch (DuplicateIdempotencyKeyException e) {
+            // A request with the same key was stored a moment earlier.
+            return sameItems(orders.findByIdempotencyKey(customerId, idempotencyKey).orElseThrow(), items);
+        }
         return order;
+    }
+
+    private static Order sameItems(Order existing, List<OrderItem> items) {
+        Map<UUID, Integer> asked = items.stream()
+                .collect(Collectors.toMap(OrderItem::productId, OrderItem::quantity, Integer::sum));
+        Map<UUID, Integer> placed = existing.lines().stream()
+                .collect(Collectors.toMap(OrderLine::productId, OrderLine::quantity));
+        if (!asked.equals(placed)) {
+            throw new IdempotencyKeyReusedException();
+        }
+        return existing;
     }
 
     private BigDecimal priceOf(UUID productId) {
@@ -53,8 +78,8 @@ public class OrderService {
         return orders.findByCustomer(customerId, Math.clamp(limit, 1, MAX_LIST));
     }
 
-    public Optional<Order> findByCartId(UUID cartId) {
-        return orders.findByCartId(cartId);
+    public Optional<Order> findByIdempotencyKey(String customerId, String idempotencyKey) {
+        return orders.findByIdempotencyKey(customerId, idempotencyKey);
     }
 
     public Optional<Order> find(UUID orderId, String customerId) {

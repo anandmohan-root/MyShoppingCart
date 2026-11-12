@@ -2,6 +2,7 @@ package com.myshoppingcart.order.adapter.in.web;
 
 import com.myshoppingcart.order.application.ConcurrentOrderChangeException;
 import com.myshoppingcart.order.application.EmptyCartException;
+import com.myshoppingcart.order.application.IdempotencyKeyReusedException;
 import com.myshoppingcart.order.application.UnknownProductException;
 import com.myshoppingcart.order.domain.OrderNotCancellableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -23,6 +24,11 @@ class ApiErrors {
     @ExceptionHandler({UnknownProductException.class, EmptyCartException.class, IllegalArgumentException.class})
     ProblemDetail badRequest(RuntimeException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    ProblemDetail keyReused(RuntimeException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
     }
 
     /** Catalog is down, slow, or its circuit breaker is open. */

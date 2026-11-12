@@ -1,6 +1,6 @@
 package com.myshoppingcart.order.adapter.out.persistence;
 
-import com.myshoppingcart.order.application.CartAlreadyOrderedException;
+import com.myshoppingcart.order.application.DuplicateIdempotencyKeyException;
 import com.myshoppingcart.order.application.Orders;
 import com.myshoppingcart.order.domain.Order;
 import com.myshoppingcart.order.domain.OrderLine;
@@ -46,25 +46,25 @@ class JdbcOrders implements Orders {
 
     /**
      * Transactional outbox: the order row and its event commit together or not at all. The unique
-     * index on cart_id makes a second order for the same cart fail here, even when two checkouts
-     * of one cart run at the same moment.
+     * index on (customer_id, idempotency_key) makes a second order under the same key fail here,
+     * even when two requests with that key run at the same moment.
      */
     @Override
     @Transactional
-    public void create(Order order, UUID cartId) {
+    public void create(Order order, String idempotencyKey) {
         try {
             jdbc.sql("""
-                            INSERT INTO orders (id, customer_id, total, status, created_at, cart_id)
-                            VALUES (:id, :customerId, :total, :status, :createdAt, :cartId)""")
+                            INSERT INTO orders (id, customer_id, total, status, created_at, idempotency_key)
+                            VALUES (:id, :customerId, :total, :status, :createdAt, :idempotencyKey)""")
                     .param("id", order.id())
                     .param("customerId", order.customerId())
                     .param("total", order.total())
                     .param("status", order.status().name())
                     .param("createdAt", Timestamp.from(order.createdAt()))
-                    .param("cartId", cartId)
+                    .param("idempotencyKey", idempotencyKey)
                     .update();
         } catch (DuplicateKeyException e) {
-            throw new CartAlreadyOrderedException(cartId);
+            throw new DuplicateIdempotencyKeyException(idempotencyKey);
         }
 
         for (int i = 0; i < order.lines().size(); i++) {
@@ -117,9 +117,10 @@ class JdbcOrders implements Orders {
     }
 
     @Override
-    public Optional<Order> findByCartId(UUID cartId) {
-        return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE cart_id = :cartId")
-                .param("cartId", cartId)
+    public Optional<Order> findByIdempotencyKey(String customerId, String idempotencyKey) {
+        return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE customer_id = :customerId AND idempotency_key = :key")
+                .param("customerId", customerId)
+                .param("key", idempotencyKey)
                 .query(ORDER_MAPPER)
                 .list())
                 .stream().findFirst();

@@ -10,15 +10,15 @@ import java.util.UUID;
 public interface Orders {
 
     /**
-     * Stores a new order and records its OrderCreated event atomically. {@code cartId} is the cart
-     * it was checked out from, or null; throws {@link CartAlreadyOrderedException} if that cart
-     * already has an order, and then stores nothing.
+     * Stores a new order and records its OrderCreated event atomically. {@code idempotencyKey} may
+     * be null; throws {@link DuplicateIdempotencyKeyException} if the customer already has an order
+     * under that key, and then stores nothing.
      */
-    void create(Order order, UUID cartId);
+    void create(Order order, String idempotencyKey);
 
     Optional<Order> findById(UUID id);
 
-    Optional<Order> findByCartId(UUID cartId);
+    Optional<Order> findByIdempotencyKey(String customerId, String idempotencyKey);
 
     /** The customer's most recent orders, newest first. */
     List<Order> findByCustomer(String customerId, int limit);

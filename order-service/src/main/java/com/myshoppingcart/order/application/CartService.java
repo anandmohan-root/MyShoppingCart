@@ -13,9 +13,9 @@ import java.util.UUID;
  * The customer's cart. It holds products and quantities only: prices are looked up at checkout,
  * so the order is charged at the prices of that moment.
  *
- * <p>A cart becomes at most one order. The order records the cart's id under a unique index, so
- * checking out the same cart again, after a timeout or a failure to empty it, returns the order
- * already placed instead of placing a second one.
+ * <p>A cart becomes at most one order. Checkout uses the cart's id as the order's idempotency
+ * key, so checking out the same cart again, after a timeout or a failure to empty it, returns the
+ * order already placed instead of placing a second one.
  */
 @Service
 public class CartService {
@@ -71,7 +71,7 @@ public class CartService {
     public Order checkout(String customerId) {
         Carts.Cart cart = carts.get(customerId);
         if (cart.id() != null) {
-            var existing = orders.findByCartId(cart.id());
+            var existing = orders.findByIdempotencyKey(customerId, keyOf(cart));
             if (existing.isPresent()) {
                 emptyAfterOrder(customerId);
                 return existing.get();
@@ -80,13 +80,7 @@ public class CartService {
         if (cart.quantities().isEmpty()) {
             throw new EmptyCartException();
         }
-        Order order;
-        try {
-            order = orders.place(customerId, toItems(cart.quantities()), cart.id());
-        } catch (CartAlreadyOrderedException e) {
-            // Another checkout of this cart got there first.
-            order = orders.findByCartId(cart.id()).orElseThrow();
-        }
+        Order order = orders.place(customerId, toItems(cart.quantities()), keyOf(cart));
         emptyAfterOrder(customerId);
         return order;
     }
@@ -94,11 +88,16 @@ public class CartService {
     /** The customer's cart, emptied first if it was already ordered but could not be emptied then. */
     private Carts.Cart currentCart(String customerId) {
         Carts.Cart cart = carts.get(customerId);
-        if (cart.id() != null && orders.findByCartId(cart.id()).isPresent()) {
+        if (cart.id() != null && orders.findByIdempotencyKey(customerId, keyOf(cart)).isPresent()) {
             carts.clear(customerId);
             return new Carts.Cart(null, Map.of());
         }
         return cart;
+    }
+
+    /** The order's idempotency key for this cart; null for a cart without an id. */
+    private static String keyOf(Carts.Cart cart) {
+        return cart.id() == null ? null : "cart:" + cart.id();
     }
 
     private void emptyAfterOrder(String customerId) {

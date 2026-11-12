@@ -22,7 +22,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog and order |
-| Idempotent checkout | Each cart has an id that its order stores under a unique index (`V4__order_cart_id.sql`), so a cart becomes one order however often checkout is repeated; `CartService.checkout` |
+| Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
@@ -63,8 +63,8 @@ shows which parts of it MyShoppingCart runs today.
 - Checkout places the order, then empties the cart. If Redis fails between the two, the order
   stands and the cart is emptied the next time the customer views, changes or checks out the
   cart; checking out again returns the same order.
-- `POST /orders` (ordering without the cart) has no idempotency key: repeating the request places
-  another order.
+- The `Idempotency-Key` header on `POST /orders` is optional. Without it, repeating the request
+  places another order. Keys never expire.
 - There is no payment provider. A charge above `payment.decline-above` (1000.00, in payment-service's
   `application.yml`) is declined; anything else succeeds. A refund only changes the payment's status.
 - Nothing reads the dead-letter topics yet; inspect them with Kafka's console consumer.
@@ -126,10 +126,13 @@ curl -s -X PUT http://localhost:8000/cart/items/22222222-2222-2222-2222-22222222
 curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/cart/checkout
 ```
 
-An order can also be placed directly, without the cart:
+An order can also be placed directly, without the cart. Send a new `Idempotency-Key` (any
+unique text up to 100 characters) with each order: if the request times out, sending it again
+with the same key returns the order already placed instead of placing a second one. The same key
+with different items returns `422`.
 
 ```bash
-curl -s -X POST http://localhost:8000/orders -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"items":[{"productId":"33333333-3333-3333-3333-333333333333","quantity":2}]}'
+curl -s -X POST http://localhost:8000/orders -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $(uuidgen 2>/dev/null || date +%s%N)" -H "Content-Type: application/json" -d '{"items":[{"productId":"33333333-3333-3333-3333-333333333333","quantity":2}]}'
 ```
 
 Either way the response contains the order `id`, its `lines` with the price of each product,
@@ -204,7 +207,8 @@ This runs the unit tests and the integration tests against real PostgreSQL, Kafk
 
 - `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
   only the owner can cancel, each customer lists only their own orders, a two-product cart checked
-  out as one order, a cart that could not be emptied not being ordered twice, the cart refusing
+  out as one order, a cart that could not be emptied not being ordered twice, a repeated
+  `Idempotency-Key` placing one order and refusing different items, the cart refusing
   unknown products and bad quantities, unreadable message to
   the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
