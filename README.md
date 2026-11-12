@@ -1,8 +1,8 @@
 # MyShoppingCart
 
-MyShoppingCart is a small, runnable slice of the on-premises online shopping platform architecture. It runs
-entirely in Docker containers on one laptop and exists to try the main concepts end to end,
-not to be a complete shop.
+MyShoppingCart is an online shopping application built on the on-premises shopping platform
+architecture: a product catalog, ordering and payment, with sign-in through Keycloak and every
+request entering through Kong. It runs in Docker containers and starts with one Docker Compose command.
 
 ```
             curl / browser
@@ -27,7 +27,7 @@ not to be a complete shop.
    All three services export traces, metrics and logs over OpenTelemetry to Grafana :3000
 ```
 
-## Concepts demonstrated
+## Architecture concepts
 
 | Concept | Where to look |
 |---|---|
@@ -43,26 +43,26 @@ not to be a complete shop.
 | Observability (traces, metrics, logs) | OpenTelemetry Java agent in `Dockerfile`, Grafana LGTM container |
 | Unit tests and Testcontainers integration tests | `*Test` and `*IntegrationTest` in each service |
 
-## Mapping to the architecture slide
+## Mapping to the reference architecture
 
-| On the slide | In MyShoppingCart | Why |
+| Reference architecture | In MyShoppingCart | Notes |
 |---|---|---|
-| Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are left out; services validate JWTs themselves |
+| Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
 | Keycloak | Included, dev mode, realm imported at start | One realm, one public client, one test user |
-| Spring Boot 3 / Java 21 services | Catalog, Order, Payment | Enough to show a synchronous call and an asynchronous flow |
+| Spring Boot 3 / Java 21 services | Catalog, Order, Payment | Browsing, ordering and payment |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
 | GitHub Actions | Included: `.github/workflows/ci.yml` builds and tests | No image publishing or deployment |
-| NGINX, Spring Cloud Gateway | Left out | One gateway is enough to show the entry-point idea |
-| Search, Cart, Inventory, Customer services | Left out | They repeat the same patterns; Redis and OpenSearch go with them |
-| Recommender (AI) | Left out | Needs a model and data; unrelated to the flow shown here |
-| Redis, OpenSearch, Ceph | Left out | No cart, search or object storage in this slice |
-| HashiCorp Vault | Left out | Test credentials come from a local `.env` file instead |
-| OpenShift, Istio | Left out | Docker Compose replaces the cluster; no mesh, no mTLS between services |
-| Harbor, Argo CD, Terraform, SonarQube | Left out | Images are built locally; there is nothing to deploy to |
+| NGINX, Spring Cloud Gateway | Not included | Kong is the single entry point |
+| Search, Cart, Inventory, Customer services | Not yet built | Redis and OpenSearch come with them |
+| Recommender (AI) | Not yet built | Needs a model and product data |
+| Redis, OpenSearch, Ceph | Not yet built | Needed with the cart, search and product media features |
+| HashiCorp Vault | Not included | Test credentials come from a local `.env` file instead |
+| OpenShift, Istio | Not included | Docker Compose replaces the cluster; no mesh, no mTLS between services |
+| Harbor, Argo CD, Terraform, SonarQube | Not included | Images are built locally; there is nothing to deploy to |
 
-## Simplifications to be aware of
+## Current limitations
 
 - An order has one product and a quantity. There are no order lines.
 - Payment always succeeds; there is no payment provider and so no failure or compensation path in the saga.
@@ -71,7 +71,7 @@ not to be a complete shop.
 - Service-to-service traffic inside the Docker network is plain HTTP.
 - All credentials are generated test values. Do not reuse them anywhere.
 
-## Run it on your laptop
+## Run locally
 
 Needs Docker Desktop (the stack uses about 4 GB of memory) and a shell with `curl` — Git Bash on Windows works.
 
