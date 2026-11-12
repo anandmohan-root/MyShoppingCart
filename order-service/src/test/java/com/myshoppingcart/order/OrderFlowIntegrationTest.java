@@ -1,5 +1,6 @@
 package com.myshoppingcart.order;
 
+import com.myshoppingcart.order.application.Carts;
 import com.myshoppingcart.order.application.ProductCatalog;
 import com.jayway.jsonpath.JsonPath;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -14,7 +15,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.GenericContainer;
@@ -33,6 +36,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -75,6 +80,9 @@ class OrderFlowIntegrationTest {
 
     @MockitoBean
     ProductCatalog catalog;
+
+    @MockitoSpyBean
+    Carts carts;
 
     @BeforeEach
     void priceTheProduct() {
@@ -197,6 +205,48 @@ class OrderFlowIntegrationTest {
                 .andExpect(jsonPath("$.items.length()").value(0));
         mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("erin"))))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cartThatCouldNotBeEmptiedIsNotOrderedTwice() throws Exception {
+        doThrow(new RedisConnectionFailureException("Redis is down"))
+                .doCallRealMethod()
+                .when(carts).clear("hank");
+        setInCart("hank", PRODUCT, 1).andExpect(status().isOk());
+
+        // The order is placed although the cart could not be emptied afterwards.
+        String first = JsonPath.read(mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("hank"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+
+        // Checking out again returns the same order and empties the cart.
+        mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("hank"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(first));
+        mvc.perform(get("/cart").with(jwt().jwt(j -> j.subject("hank"))))
+                .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/orders").with(jwt().jwt(j -> j.subject("hank"))))
+                .andExpect(jsonPath("$.length()").value(1));
+        assertThat(readFor("order-created", first, 1)).hasSize(1);
+
+        // The next product starts a new cart, which becomes a new order.
+        setInCart("hank", PRODUCT, 3).andExpect(jsonPath("$.items[0].quantity").value(3));
+        mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("hank"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(not(first)));
+    }
+
+    @Test
+    void anOrderedCartLeftBehindIsEmptiedWhenTheCustomerComesBack() throws Exception {
+        doThrow(new RedisConnectionFailureException("Redis is down"))
+                .doCallRealMethod()
+                .when(carts).clear("ivy");
+        setInCart("ivy", PRODUCT, 1).andExpect(status().isOk());
+        mvc.perform(post("/cart/checkout").with(jwt().jwt(j -> j.subject("ivy"))))
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/cart").with(jwt().jwt(j -> j.subject("ivy"))))
+                .andExpect(jsonPath("$.items.length()").value(0));
     }
 
     @Test

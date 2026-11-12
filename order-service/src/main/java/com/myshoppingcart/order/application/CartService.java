@@ -1,6 +1,8 @@
 package com.myshoppingcart.order.application;
 
 import com.myshoppingcart.order.domain.Order;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -10,9 +12,15 @@ import java.util.UUID;
 /**
  * The customer's cart. It holds products and quantities only: prices are looked up at checkout,
  * so the order is charged at the prices of that moment.
+ *
+ * <p>A cart becomes at most one order. The order records the cart's id under a unique index, so
+ * checking out the same cart again, after a timeout or a failure to empty it, returns the order
+ * already placed instead of placing a second one.
  */
 @Service
 public class CartService {
+
+    private static final Logger log = LoggerFactory.getLogger(CartService.class);
 
     public static final int MAX_QUANTITY = 99;
 
@@ -27,7 +35,7 @@ public class CartService {
     }
 
     public List<OrderItem> view(String customerId) {
-        return toItems(carts.get(customerId));
+        return toItems(currentCart(customerId).quantities());
     }
 
     /** Sets the product's quantity in the cart. The product must exist in the catalog. */
@@ -35,7 +43,7 @@ public class CartService {
         if (quantity < 1 || quantity > MAX_QUANTITY) {
             throw new IllegalArgumentException("quantity must be between 1 and " + MAX_QUANTITY);
         }
-        Map<UUID, Integer> cart = carts.get(customerId);
+        Map<UUID, Integer> cart = currentCart(customerId).quantities();
         if (!cart.containsKey(productId) && cart.size() >= Order.MAX_LINES) {
             throw new IllegalArgumentException("a cart can hold at most " + Order.MAX_LINES + " products");
         }
@@ -56,20 +64,52 @@ public class CartService {
     }
 
     /**
-     * Places one order for everything in the cart, then empties the cart. If emptying fails after
-     * the order was stored, the order stands and the cart keeps its products.
+     * Places one order for everything in the cart, then empties the cart. If the cart was already
+     * ordered, returns that order. If emptying the cart fails, the order still stands: the failure
+     * is logged, and the cart is emptied on the customer's next visit to it.
      */
     public Order checkout(String customerId) {
-        List<OrderItem> items = view(customerId);
-        if (items.isEmpty()) {
+        Carts.Cart cart = carts.get(customerId);
+        if (cart.id() != null) {
+            var existing = orders.findByCartId(cart.id());
+            if (existing.isPresent()) {
+                emptyAfterOrder(customerId);
+                return existing.get();
+            }
+        }
+        if (cart.quantities().isEmpty()) {
             throw new EmptyCartException();
         }
-        Order order = orders.place(customerId, items);
-        carts.clear(customerId);
+        Order order;
+        try {
+            order = orders.place(customerId, toItems(cart.quantities()), cart.id());
+        } catch (CartAlreadyOrderedException e) {
+            // Another checkout of this cart got there first.
+            order = orders.findByCartId(cart.id()).orElseThrow();
+        }
+        emptyAfterOrder(customerId);
         return order;
     }
 
-    private static List<OrderItem> toItems(Map<UUID, Integer> cart) {
-        return cart.entrySet().stream().map(e -> new OrderItem(e.getKey(), e.getValue())).toList();
+    /** The customer's cart, emptied first if it was already ordered but could not be emptied then. */
+    private Carts.Cart currentCart(String customerId) {
+        Carts.Cart cart = carts.get(customerId);
+        if (cart.id() != null && orders.findByCartId(cart.id()).isPresent()) {
+            carts.clear(customerId);
+            return new Carts.Cart(null, Map.of());
+        }
+        return cart;
+    }
+
+    private void emptyAfterOrder(String customerId) {
+        try {
+            carts.clear(customerId);
+        } catch (RuntimeException e) {
+            log.warn("Order placed, but the cart of {} could not be emptied; it is emptied on the next visit", customerId, e);
+        }
+    }
+
+    private static List<OrderItem> toItems(Map<UUID, Integer> quantities) {
+        return quantities.entrySet().stream().map(e -> new OrderItem(e.getKey(), e.getValue())).toList();
     }
 }

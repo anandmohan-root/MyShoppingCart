@@ -9,10 +9,16 @@ import java.util.UUID;
 /** Outbound port: order storage. */
 public interface Orders {
 
-    /** Stores a new order and records its OrderCreated event atomically. */
-    void create(Order order);
+    /**
+     * Stores a new order and records its OrderCreated event atomically. {@code cartId} is the cart
+     * it was checked out from, or null; throws {@link CartAlreadyOrderedException} if that cart
+     * already has an order, and then stores nothing.
+     */
+    void create(Order order, UUID cartId);
 
     Optional<Order> findById(UUID id);
+
+    Optional<Order> findByCartId(UUID cartId);
 
     /** The customer's most recent orders, newest first. */
     List<Order> findByCustomer(String customerId, int limit);

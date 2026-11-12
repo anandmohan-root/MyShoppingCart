@@ -10,13 +10,15 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 /**
- * Carts in Redis: one hash per customer, product id to quantity. A cart that is not changed for
+ * Carts in Redis: one hash per customer holding the cart's id under {@link #ID_FIELD} and
+ * product id to quantity for everything else. A cart that is not changed for
  * {@link #IDLE_EXPIRY} disappears.
  */
 @Component
 class RedisCarts implements Carts {
 
     static final Duration IDLE_EXPIRY = Duration.ofDays(30);
+    static final String ID_FIELD = "id";
 
     private final StringRedisTemplate redis;
 
@@ -28,17 +30,23 @@ class RedisCarts implements Carts {
         return "cart:" + customerId;
     }
 
-    /** Sorted by product id, so the cart reads the same way every time. */
+    /** Products sorted by id, so the cart reads the same way every time. */
     @Override
-    public Map<UUID, Integer> get(String customerId) {
-        Map<UUID, Integer> cart = new TreeMap<>();
-        redis.<String, String>opsForHash().entries(key(customerId))
-                .forEach((product, quantity) -> cart.put(UUID.fromString(product), Integer.parseInt(quantity)));
-        return cart;
+    public Cart get(String customerId) {
+        Map<String, String> fields = redis.<String, String>opsForHash().entries(key(customerId));
+        Map<UUID, Integer> quantities = new TreeMap<>();
+        fields.forEach((field, value) -> {
+            if (!field.equals(ID_FIELD)) {
+                quantities.put(UUID.fromString(field), Integer.parseInt(value));
+            }
+        });
+        String id = fields.get(ID_FIELD);
+        return new Cart(id == null ? null : UUID.fromString(id), quantities);
     }
 
     @Override
     public void put(String customerId, UUID productId, int quantity) {
+        redis.opsForHash().putIfAbsent(key(customerId), ID_FIELD, UUID.randomUUID().toString());
         redis.opsForHash().put(key(customerId), productId.toString(), Integer.toString(quantity));
         redis.expire(key(customerId), IDLE_EXPIRY);
     }

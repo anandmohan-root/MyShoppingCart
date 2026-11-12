@@ -25,6 +25,14 @@ public class OrderService {
     }
 
     public Order place(String customerId, List<OrderItem> items) {
+        return place(customerId, items, null);
+    }
+
+    /**
+     * Places an order checked out from the cart {@code cartId}. Throws
+     * {@link CartAlreadyOrderedException} if that cart already has an order.
+     */
+    public Order place(String customerId, List<OrderItem> items, UUID cartId) {
         if (items.size() > Order.MAX_LINES) {
             throw new IllegalArgumentException("an order can have at most " + Order.MAX_LINES + " lines");
         }
@@ -32,7 +40,7 @@ public class OrderService {
                 .map(item -> new OrderLine(item.productId(), item.quantity(), priceOf(item.productId())))
                 .toList();
         Order order = Order.place(customerId, lines);
-        orders.create(order);
+        orders.create(order, cartId);
         return order;
     }
 
@@ -43,6 +51,10 @@ public class OrderService {
     /** The caller's own orders, newest first. {@code limit} is kept between 1 and {@link #MAX_LIST}. */
     public List<Order> list(String customerId, int limit) {
         return orders.findByCustomer(customerId, Math.clamp(limit, 1, MAX_LIST));
+    }
+
+    public Optional<Order> findByCartId(UUID cartId) {
+        return orders.findByCartId(cartId);
     }
 
     public Optional<Order> find(UUID orderId, String customerId) {

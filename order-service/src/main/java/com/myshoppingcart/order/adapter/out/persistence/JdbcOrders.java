@@ -1,11 +1,13 @@
 package com.myshoppingcart.order.adapter.out.persistence;
 
+import com.myshoppingcart.order.application.CartAlreadyOrderedException;
 import com.myshoppingcart.order.application.Orders;
 import com.myshoppingcart.order.domain.Order;
 import com.myshoppingcart.order.domain.OrderLine;
 import com.myshoppingcart.order.domain.OrderStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -42,19 +44,28 @@ class JdbcOrders implements Orders {
         this.json = json;
     }
 
-    /** Transactional outbox: the order row and its event commit together or not at all. */
+    /**
+     * Transactional outbox: the order row and its event commit together or not at all. The unique
+     * index on cart_id makes a second order for the same cart fail here, even when two checkouts
+     * of one cart run at the same moment.
+     */
     @Override
     @Transactional
-    public void create(Order order) {
-        jdbc.sql("""
-                        INSERT INTO orders (id, customer_id, total, status, created_at)
-                        VALUES (:id, :customerId, :total, :status, :createdAt)""")
-                .param("id", order.id())
-                .param("customerId", order.customerId())
-                .param("total", order.total())
-                .param("status", order.status().name())
-                .param("createdAt", Timestamp.from(order.createdAt()))
-                .update();
+    public void create(Order order, UUID cartId) {
+        try {
+            jdbc.sql("""
+                            INSERT INTO orders (id, customer_id, total, status, created_at, cart_id)
+                            VALUES (:id, :customerId, :total, :status, :createdAt, :cartId)""")
+                    .param("id", order.id())
+                    .param("customerId", order.customerId())
+                    .param("total", order.total())
+                    .param("status", order.status().name())
+                    .param("createdAt", Timestamp.from(order.createdAt()))
+                    .param("cartId", cartId)
+                    .update();
+        } catch (DuplicateKeyException e) {
+            throw new CartAlreadyOrderedException(cartId);
+        }
 
         for (int i = 0; i < order.lines().size(); i++) {
             OrderLine line = order.lines().get(i);
@@ -100,6 +111,15 @@ class JdbcOrders implements Orders {
     public Optional<Order> findById(UUID id) {
         return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE id = :id")
                 .param("id", id)
+                .query(ORDER_MAPPER)
+                .list())
+                .stream().findFirst();
+    }
+
+    @Override
+    public Optional<Order> findByCartId(UUID cartId) {
+        return withLines(jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE cart_id = :cartId")
+                .param("cartId", cartId)
                 .query(ORDER_MAPPER)
                 .list())
                 .stream().findFirst();

@@ -22,6 +22,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog and order |
+| Idempotent checkout | Each cart has an id that its order stores under a unique index (`V4__order_cart_id.sql`), so a cart becomes one order however often checkout is repeated; `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
@@ -60,7 +61,10 @@ shows which parts of it MyShoppingCart runs today.
 - An order holds up to 20 products. Prices are looked up one product at a time at checkout.
 - Stock is not checked or reserved: there is no inventory service yet.
 - Checkout places the order, then empties the cart. If Redis fails between the two, the order
-  stands and the cart keeps its products, so checking out again would place a second order.
+  stands and the cart is emptied the next time the customer views, changes or checks out the
+  cart; checking out again returns the same order.
+- `POST /orders` (ordering without the cart) has no idempotency key: repeating the request places
+  another order.
 - There is no payment provider. A charge above `payment.decline-above` (1000.00, in payment-service's
   `application.yml`) is declined; anything else succeeds. A refund only changes the payment's status.
 - Nothing reads the dead-letter topics yet; inspect them with Kafka's console consumer.
@@ -200,7 +204,8 @@ This runs the unit tests and the integration tests against real PostgreSQL, Kafk
 
 - `OrderFlowIntegrationTest`: paid, declined, cancel with refund, payment after cancellation,
   only the owner can cancel, each customer lists only their own orders, a two-product cart checked
-  out as one order, the cart refusing unknown products and bad quantities, unreadable message to
+  out as one order, a cart that could not be emptied not being ordered twice, the cart refusing
+  unknown products and bad quantities, unreadable message to
   the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `OrderCreated` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
