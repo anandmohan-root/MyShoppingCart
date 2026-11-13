@@ -30,6 +30,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Browser sign-in (OpenID Connect, PKCE) | `storefront/auth.js`: authorization code flow with PKCE for the public Keycloak client `shop-web`, written with the browser's Web Crypto API (no library). Keycloak only returns to `http://localhost:8000/` |
+| Live updates by server push | `GET /orders/events` is a server-sent event stream of the caller's order status changes, sent only after the change commits (`OrderStatusStream`, a `@TransactionalEventListener`). The storefront reads it with `fetch`, so the token stays in a header, and reconnects when the server ends the stream every 50 s, before Kong's 60 s timeout |
 | Single-page app behind the gateway | `storefront/` is served by nginx through Kong on the same origin as the API, so no CORS rules are needed; nginx sends a strict Content-Security-Policy (`infra/nginx/storefront.conf`) and the pages are built without `innerHTML` |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
@@ -73,8 +74,9 @@ shows which parts of it MyShoppingCart runs today.
   product. Off-sale products keep their stock; nothing is sold from it.
 - Catalog and inventory check roles; order and payment accept any signed-in user.
 - The storefront keeps its tokens in the tab's `sessionStorage`; closing the tab signs you out of
-  the shop but not of Keycloak. It shows order status by asking again every 2 seconds while an
-  order is processing, not by push.
+  the shop but not of Keycloak.
+- Live order updates reach only browsers connected to the order-service instance that handled
+  the change; that is every browser while there is one instance, as here.
 - The storefront only works at `http://localhost:8000/`, the one address Keycloak returns to.
 - Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
   orders survive restarts; orders placed before the ids were fixed no longer show up.
@@ -136,7 +138,7 @@ The script signs in as the test user and checks these journeys through Kong:
 
 Open http://localhost:8000/ and sign in with `SHOP_USER` and `SHOP_USER_PASSWORD` from `.env`.
 Browse the products and their stock, add some to the cart, check out, and watch the order move
-from Processing to Paid on **My orders**, where you can also cancel it. Sign in as `SHOP_ADMIN`
+from Processing to Paid on **My orders** as soon as payment completes, where you can also cancel it. Sign in as `SHOP_ADMIN`
 instead to get the **Admin** page: add products, change names and prices, restock, and take
 products off sale or put them back.
 

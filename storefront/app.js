@@ -7,7 +7,7 @@ import { signIn, completeSignIn, accessToken, currentUser, signOut } from "./aut
 const main = document.querySelector("main");
 const nav = document.querySelector("nav");
 const notice = document.querySelector("#notice");
-let refreshTimer = null;
+let following = null; // aborts the "My orders" update stream when the page changes
 let flash = null;
 
 const STATUS = {
@@ -126,7 +126,8 @@ function renderNav(user) {
 const pages = { products: productsPage, cart: cartPage, orders: ordersPage, admin: adminPage };
 
 async function render() {
-  clearTimeout(refreshTimer);
+  following?.abort();
+  following = null;
   notice.hidden = true;
   if (flash) {
     show(flash.message, flash.kind);
@@ -145,6 +146,10 @@ async function render() {
   const page = pages[name] && (name !== "admin" || user.isAdmin) ? pages[name] : productsPage;
   try {
     await page();
+    if (page === ordersPage) {
+      following = new AbortController();
+      followOrders(following.signal);
+    }
   } catch (error) {
     show(error.message, "error");
   }
@@ -279,13 +284,39 @@ async function ordersPage() {
       el("thead", {}, el("tr", {}, el("th", {}, "Placed"), el("th", {}, "Items"), el("th", { class: "num" }, "Total"),
         el("th", {}, "Status"), el("th", {}, ""))),
       el("tbody", {}, rows)));
-  // While an order is still being processed, redraw just this page (keeping any message shown).
-  if (orders.some(order => order.status === "PENDING")) {
-    refreshTimer = setTimeout(() => {
-      if (location.hash === "#/orders") {
-        ordersPage().catch(error => show(error.message, "error"));
+}
+
+/**
+ * Redraws "My orders" whenever order-service pushes a status change (GET /orders/events, a
+ * server-sent event stream). fetch is used instead of EventSource because EventSource cannot send
+ * the Authorization header. The server ends each stream after about 50 seconds; the page then
+ * reconnects and redraws once, which also catches any change missed in between.
+ */
+async function followOrders(stop) {
+  while (!stop.aborted) {
+    try {
+      const token = await accessToken();
+      if (!token) {
+        return;
       }
-    }, 2000);
+      const response = await fetch("/orders/events", { headers: { Authorization: `Bearer ${token}` }, signal: stop });
+      if (!response.ok) {
+        throw new Error(`order updates unavailable (${response.status})`);
+      }
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        if (chunk.value.includes("event:order-status")) {
+          await ordersPage();
+        }
+      }
+      await ordersPage();
+    } catch (error) {
+      if (stop.aborted) {
+        return;
+      }
+      // Network trouble or a restart: wait a little before reconnecting.
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
   }
 }
 

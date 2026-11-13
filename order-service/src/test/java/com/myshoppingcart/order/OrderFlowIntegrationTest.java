@@ -19,6 +19,7 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -45,6 +46,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -114,6 +116,20 @@ class OrderFlowIntegrationTest {
 
         mvc.perform(get("/orders/{id}", orderId).with(jwt().jwt(j -> j.subject("mallory"))))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void anOpenEventStreamIsToldWhenTheOrderIsPaid() throws Exception {
+        String orderId = place();
+        MvcResult stream = mvc.perform(get("/orders/events").with(jwt().jwt(j -> j.subject("alice"))))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        send("payment-completed", orderId);
+
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(stream.getResponse().getContentAsString())
+                .contains("event:order-status")
+                .contains("\"orderId\":\"%s\",\"status\":\"PAID\"".formatted(orderId)));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.myshoppingcart.order.application;
 import com.myshoppingcart.order.domain.Order;
 import com.myshoppingcart.order.domain.OrderLine;
 import com.myshoppingcart.order.domain.OrderStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,10 +21,12 @@ public class OrderService {
 
     private final Orders orders;
     private final ProductCatalog catalog;
+    private final ApplicationEventPublisher events;
 
-    public OrderService(Orders orders, ProductCatalog catalog) {
+    public OrderService(Orders orders, ProductCatalog catalog, ApplicationEventPublisher events) {
         this.orders = orders;
         this.catalog = catalog;
+        this.events = events;
     }
 
     /**
@@ -92,9 +95,7 @@ public class OrderService {
     public Optional<Order> cancel(UUID orderId, String customerId) {
         return find(orderId, customerId).map(order -> {
             Order cancelled = order.cancelled();
-            if (!orders.transition(order, cancelled)) {
-                throw new ConcurrentOrderChangeException(orderId);
-            }
+            change(order, cancelled);
             orders.announceCancellation(order);
             if (order.status() == OrderStatus.PAID) {
                 orders.requestRefund(order);
@@ -112,8 +113,8 @@ public class OrderService {
         orders.findById(orderId).ifPresent(order -> {
             if (order.status() == OrderStatus.CANCELLED) {
                 orders.requestRefund(order);
-            } else if (!orders.transition(order, order.paid())) {
-                throw new ConcurrentOrderChangeException(orderId);
+            } else {
+                change(order, order.paid());
             }
         });
     }
@@ -124,20 +125,25 @@ public class OrderService {
      */
     @Transactional
     public void paymentDeclined(UUID orderId) {
-        orders.findById(orderId).ifPresent(order -> {
-            if (!orders.transition(order, order.declined())) {
-                throw new ConcurrentOrderChangeException(orderId);
-            }
-        });
+        orders.findById(orderId).ifPresent(order -> change(order, order.declined()));
     }
 
     /** Safe to call more than once. Nothing was reserved or charged, so nothing needs undoing. */
     @Transactional
     public void outOfStock(UUID orderId) {
-        orders.findById(orderId).ifPresent(order -> {
-            if (!orders.transition(order, order.outOfStock())) {
-                throw new ConcurrentOrderChangeException(orderId);
-            }
-        });
+        orders.findById(orderId).ifPresent(order -> change(order, order.outOfStock()));
+    }
+
+    /**
+     * Saves the new status if nobody changed the order meanwhile, and announces a real change. The
+     * announcement reaches browsers only after the transaction commits (see OrderStatusStream).
+     */
+    private void change(Order before, Order after) {
+        if (!orders.transition(before, after)) {
+            throw new ConcurrentOrderChangeException(before.id());
+        }
+        if (after.status() != before.status()) {
+            events.publishEvent(new OrderStatusChanged(after.customerId(), after.id(), after.status()));
+        }
     }
 }

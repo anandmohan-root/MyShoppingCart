@@ -4,6 +4,7 @@ import com.myshoppingcart.order.application.OrderItem;
 import com.myshoppingcart.order.application.OrderService;
 import com.myshoppingcart.order.domain.Order;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.UUID;
@@ -27,9 +29,21 @@ class OrderController {
     }
 
     private final OrderService orders;
+    private final OrderStatusStream statusStream;
 
-    OrderController(OrderService orders) {
+    OrderController(OrderService orders, OrderStatusStream statusStream) {
         this.orders = orders;
+        this.statusStream = statusStream;
+    }
+
+    /**
+     * A server-sent event stream of the caller's order status changes. It ends after
+     * {@link OrderStatusStream#STREAM_LIFETIME}; the client reconnects.
+     */
+    @GetMapping(path = "/orders/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    ResponseEntity<SseEmitter> events(@AuthenticationPrincipal Jwt jwt) {
+        // Tells Kong's nginx not to buffer the stream.
+        return ResponseEntity.ok().header("X-Accel-Buffering", "no").body(statusStream.open(jwt.getSubject()));
     }
 
     static final int MAX_IDEMPOTENCY_KEY_LENGTH = 100;
