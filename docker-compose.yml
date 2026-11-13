@@ -72,6 +72,8 @@ services:
     image: axllent/mailpit:v1.27
     environment:
       MP_WEBROOT: mail
+      # Sign-in for the mailbox page and its API (not for receiving mail from notification-service).
+      MP_UI_AUTH: ${MAILBOX_USER:?add MAILBOX_USER and MAILBOX_PASSWORD from .env.example to .env}:${MAILBOX_PASSWORD:?add MAILBOX_USER and MAILBOX_PASSWORD from .env.example to .env}
 
   # The browser storefront: static files only, reached through Kong at http://localhost:8000/.
   storefront:

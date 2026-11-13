@@ -1,6 +1,19 @@
 # Kong in DB-less mode: this file is the whole gateway configuration.
-# Kong only routes here; each service validates the JWT itself.
+# Kong routes and limits requests; each service validates the JWT itself.
 _format_version: "3.0"
+
+# Applied to every route. Limits count per client address, in this Kong only (policy local).
+plugins:
+  - name: rate-limiting
+    config:
+      second: 50
+      minute: 1000
+      limit_by: ip
+      policy: local
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 1
+      size_unit: megabytes
 
 services:
   - name: keycloak
@@ -32,7 +45,7 @@ services:
         paths: ["/orders", "/cart"]
         strip_path: false
 
-  # The test mailbox (Mailpit). Development only: anyone who can reach port 8000 can read it.
+  # The test mailbox (Mailpit), behind its own sign-in (MAILBOX_USER in .env).
   - name: mailbox
     url: http://mailpit:8025
     routes:

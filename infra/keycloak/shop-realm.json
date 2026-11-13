@@ -2,6 +2,10 @@
   "realm": "shop",
   "enabled": true,
   "sslRequired": "none",
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
   "clients": [
     {
       "clientId": "shop-cli",

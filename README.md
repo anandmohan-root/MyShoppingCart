@@ -33,6 +33,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Single-page app behind the gateway | `storefront/` is served by nginx through Kong on the same origin as the API, so no CORS rules are needed; nginx sends a strict Content-Security-Policy (`infra/nginx/storefront.conf`) and the pages are built without `innerHTML` |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
+| Gateway protection | Kong limits each client address to 50 requests a second and 1000 a minute (`429` beyond) and refuses bodies over 1 MB (`413`); Keycloak locks an account for a while after 5 wrong passwords; the test mailbox has its own sign-in |
 | Timeout, retry, circuit breaker | `order-service` `CatalogClient` + `resilience4j` / `spring.http.client` in its `application.yml` |
 | Observability (traces, metrics, logs) | OpenTelemetry Java agent in `Dockerfile`, Grafana LGTM container |
 | Unit tests and Testcontainers integration tests | `*Test` and `*IntegrationTest` in each service |
@@ -48,7 +49,7 @@ shows which parts of it MyShoppingCart runs today.
 
 | Reference architecture | In MyShoppingCart | Notes |
 |---|---|---|
-| Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
+| Kong Gateway | Included, DB-less: routing, rate and size limits | No gateway-side JWT check: Kong's free JWT plugin needs Keycloak's keys in its config, and Keycloak in dev mode makes new keys on every restart. Every service validates the JWT itself |
 | Keycloak | Included, dev mode, realm imported at start | One realm, one public client, a test customer and a test admin |
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
@@ -77,9 +78,11 @@ shows which parts of it MyShoppingCart runs today.
 - The storefront only works at `http://localhost:8000/`, the one address Keycloak returns to.
 - Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
   orders survive restarts; orders placed before the ids were fixed no longer show up.
-- If your `.env` predates the admin user, copy the `SHOP_ADMIN` lines from `.env.example` into it.
-- Emails go to Mailpit, a test mailbox; nothing is delivered to real addresses. The mailbox at
-  `/mail/` has no sign-in, so anyone who can reach port 8000 can read it.
+- If your `.env` predates the admin user or the mailbox password, copy the missing `SHOP_ADMIN`
+  and `MAILBOX` lines from `.env.example` into it.
+- Emails go to Mailpit, a test mailbox; nothing is delivered to real addresses.
+- Rate limits are counted per client address inside the one Kong; on Docker Desktop every
+  request comes from the same address, so all your browser tabs and scripts share the limit.
 - notification-service only reads events published after it first started, so nobody is emailed
   about older orders. An email can, rarely, be sent twice if the service stops between sending it
   and recording it.
@@ -125,7 +128,9 @@ The script signs in as the test user and checks these journeys through Kong:
   repriced and taken off sale;
 - the storefront: served with its Content-Security-Policy, and Keycloak only sending a sign-in
   back to it;
-- the emails: the cancelled order from the start got exactly three (confirmed, cancelled, refund).
+- the emails: the cancelled order from the start got exactly three (confirmed, cancelled, refund);
+- the gateway: 120 requests at once are partly refused with `429`, a 2 MB body with `413`, and the
+  mailbox without its password with `401`.
 
 ### Shop in the browser
 
@@ -136,7 +141,8 @@ instead to get the **Admin** page: add products, change names and prices, restoc
 products off sale or put them back.
 
 Every order step sends the customer an email (confirmed, payment declined, out of stock,
-cancelled, refund on its way). Read them in the test mailbox at http://localhost:8000/mail/.
+cancelled, refund on its way). Read them in the test mailbox at http://localhost:8000/mail/,
+signing in with `MAILBOX_USER` and `MAILBOX_PASSWORD` from `.env`.
 
 ### Run the browser tests
 

@@ -10,7 +10,8 @@
 #   8. an admin restocks a product, and a customer may not,
 #   9. an admin adds a product, restocks it, changes its price and takes it off sale,
 #  10. the browser storefront is served with its security headers and can start a sign-in,
-#  11. the customer was emailed about the order from steps 1 and 3: paid, cancelled, refunded.
+#  11. the customer was emailed about the order from steps 1 and 3: paid, cancelled, refunded,
+#  12. Kong turns away request floods and oversized bodies, and the mailbox needs its password.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -208,7 +209,7 @@ echo "  served with a Content-Security-Policy; sign-in starts, and only returns 
 echo "11. Checking the emails about order ${PAID:0:8} in the test mailbox ..."
 SUBJECTS=""
 for _ in $(seq 30); do
-  SUBJECTS=$(curl -s "$GATEWAY/mail/api/v1/search?query=${PAID:0:8}" | grep -o '"Subject":"[^"]*"' | sort | tr '\n' ' ')
+  SUBJECTS=$(curl -s -u "$MAILBOX_USER:$MAILBOX_PASSWORD" "$GATEWAY/mail/api/v1/search?query=${PAID:0:8}" | grep -o '"Subject":"[^"]*"' | sort | tr '\n' ' ')
   [ "$(echo "$SUBJECTS" | grep -o Subject | wc -l)" -ge 3 ] && break
   sleep 1
 done
@@ -218,4 +219,22 @@ done
 [ "$(echo "$SUBJECTS" | grep -o Subject | wc -l)" -eq 3 ] || { echo "FAILED: expected 3 emails for order ${PAID:0:8}, found: $SUBJECTS"; exit 1; }
 echo "  3 emails: confirmed, cancelled, refund on its way"
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, the storefront served, and the customer emailed"
+echo "12. Checking the gateway's protections ..."
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$GATEWAY/mail/api/v1/messages")
+[ "$CODE" = "401" ] || { echo "FAILED: the mailbox answered $CODE without its password, not 401"; exit 1; }
+echo "  the mailbox needs its password (401 without)"
+# "Expect:" stops curl asking first (Kong would answer 417 before the body is sent).
+CODE=$(head -c 2000000 /dev/zero | tr '\0' 'x' | curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/orders" \
+  -H "Expect:" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @-)
+[ "$CODE" = "413" ] || { echo "FAILED: a 2 MB request body got $CODE, not 413"; exit 1; }
+echo "  a 2 MB request body is refused (413)"
+# One curl sends all 120 at once; separate curl processes start too slowly to exceed 50 a second.
+BURST=()
+for i in $(seq 120); do BURST+=(-o /dev/null "$GATEWAY/products?burst=$i"); done
+LIMITED=$(curl -s --parallel --parallel-immediate --parallel-max 120 -w '%{http_code}\n' \
+  -H "Authorization: Bearer $TOKEN" "${BURST[@]}" | grep -c 429 || true)
+[ "$LIMITED" -gt 0 ] || { echo "FAILED: 120 requests at once were all let through"; exit 1; }
+echo "  $LIMITED of 120 requests sent at once got 429 Too Many Requests"
+sleep 2  # let the per-second limit reset before anything else calls the gateway
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, the storefront served, the customer emailed, and the gateway protected"
