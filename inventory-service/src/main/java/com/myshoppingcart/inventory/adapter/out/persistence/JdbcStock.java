@@ -55,6 +55,13 @@ class JdbcStock implements Stock {
     }
 
     @Override
+    public void open(UUID productId) {
+        jdbc.sql("INSERT INTO stock (product_id, available) VALUES (:id, 0) ON CONFLICT (product_id) DO NOTHING")
+                .param("id", productId)
+                .update();
+    }
+
+    @Override
     public Optional<StockItem> add(UUID productId, int quantity) {
         return jdbc.sql("UPDATE stock SET available = available + :quantity WHERE product_id = :id RETURNING product_id, available")
                 .param("quantity", quantity)

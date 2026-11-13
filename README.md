@@ -15,7 +15,8 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 |---|---|
 | Hexagonal layout (domain, application ports, adapters in/out) | every service: `domain`, `application`, `adapter/in`, `adapter/out` |
 | Database per service | `infra/postgres/init.sql`, one Flyway migration per service |
-| Transactional outbox | Order, inventory and payment: `JdbcOrders`, `OutboxInventoryEvents` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
+| Transactional outbox | Every service: `JdbcProducts`, `JdbcOrders`, `OutboxInventoryEvents` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
+| Keeping services in step with events | A product added to the catalog publishes `ProductCreated`; inventory opens its stock at 0 (`ProductCreatedListener`), without either service calling the other |
 | Event-driven saga (choreography) over Kafka | `OrderCreated` -> inventory -> `StockReserved` -> payment -> `PaymentCompleted` (order `PAID`) or `PaymentDeclined` (order `PAYMENT_DECLINED`); or `StockRejected` (order `OUT_OF_STOCK`, nothing charged) |
 | Saga compensation | A declined payment or a cancellation (`OrderCancelled`) puts the stock back (`InventoryService.release`). Cancelling a paid order, or a payment arriving after cancellation, also sends `RefundRequested`; payment-service refunds. `OrderService.cancel` / `paymentCompleted` |
 | Idempotent consumer | `PaymentService.payFor` + unique `order_id` in `V1__payment.sql`; one `reservation` row per order in inventory, so events about an order are safe to repeat or arrive in any order (a cancellation before the reservation leaves a marker, and nothing is reserved later); `refund` and the order status changes are safe to repeat |
@@ -23,7 +24,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order, inventory and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog, order and inventory |
-| Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may call `POST /stock/{productId}/restock` (`SecurityConfig` in inventory) |
+| Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may add or change products (`SecurityConfig` in catalog) and restock (`SecurityConfig` in inventory) |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
@@ -61,9 +62,10 @@ shows which parts of it MyShoppingCart runs today.
 ## Current limitations
 
 - An order holds up to 20 products. Prices are looked up one product at a time at checkout.
-- Stock is reserved when the order is placed, before payment. An admin can restock products the
-  shop already stocks; adding a new product to the shop is not built yet.
-- Only inventory checks roles; the other services accept any signed-in user.
+- Stock is reserved when the order is placed, before payment.
+- A product taken off sale stays in carts until checkout, which then fails with `400` for that
+  product. Off-sale products keep their stock; nothing is sold from it.
+- Catalog and inventory check roles; order and payment accept any signed-in user.
 - If you started the stack before inventory was added, its database volume has no `inventory`
   database. Run `docker compose down -v` once. If your `.env` predates the admin user, copy the
   `SHOP_ADMIN` lines from `.env.example` into it.
@@ -102,7 +104,8 @@ The script signs in as the test user and checks these journeys through Kong: an 
 paid, an order above the card limit that is declined, a paid order that is cancelled and
 refunded, the list of the customer's orders, a cart of two products checked out as one
 order, an order sent twice with one `Idempotency-Key`, an order for more than is in stock, and
-a restock by the admin that the customer is refused.
+a restock by the admin that the customer is refused, and a product the admin adds, restocks,
+reprices and takes off sale.
 After each step it checks the stock went down or came back. The main steps by hand:
 
 ```bash
@@ -176,7 +179,7 @@ An order of 5 Espresso Machines (`11111111-1111-1111-1111-111111111111`, total 1
 stock or already cancelled order cannot be cancelled (`409`). Without the `Authorization` header
 every call returns `401`.
 
-### Restock as an admin
+### Manage products as an admin
 
 The test admin (`SHOP_ADMIN` in `.env`) has the Keycloak realm role `admin`. Sign in as the admin:
 
@@ -184,14 +187,32 @@ The test admin (`SHOP_ADMIN` in `.env`) has the Keycloak realm role `admin`. Sig
 ADMIN_TOKEN=$(curl -s -X POST http://localhost:8000/realms/shop/protocol/openid-connect/token -d grant_type=password -d client_id=shop-cli -d "username=$SHOP_ADMIN" --data-urlencode "password=$SHOP_ADMIN_PASSWORD" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
 ```
 
-Add 10 Espresso Machines (1 to 10000 at a time); the response shows the new stock level:
+Add a product (a name up to 100 characters, a price above 0 with at most 2 decimals). The
+response contains its `id`; a moment later `/stock` lists it with 0 in stock:
 
 ```bash
-curl -s -X POST http://localhost:8000/stock/11111111-1111-1111-1111-111111111111/restock -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"quantity":10}'
+curl -s -X POST http://localhost:8000/products -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"name":"Milk Frother","price":39.90}'
 ```
 
-The same call with the customer's `$TOKEN` returns `403`; a product the shop does not stock
-returns `404`.
+Restock it (1 to 10000 at a time); the response shows the new stock level:
+
+```bash
+curl -s -X POST http://localhost:8000/stock/<id>/restock -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"quantity":10}'
+```
+
+Change its name or price, or take it off sale, with only the fields you want to change. A new
+price applies to orders placed from then on; an off-sale product disappears from `/products`
+and ordering it returns `400`. `{"onSale":true}` puts it back.
+
+```bash
+curl -s -X PATCH http://localhost:8000/products/<id> -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"price":34.90}'
+```
+
+```bash
+curl -s -X PATCH http://localhost:8000/products/<id> -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"onSale":false}'
+```
+
+The same calls with the customer's `$TOKEN` return `403`; an unknown product returns `404`.
 
 ### See the traces
 
@@ -248,6 +269,9 @@ mvn verify
 
 This runs the unit tests and the integration tests against real PostgreSQL, Kafka and Redis containers:
 
+- `CatalogIntegrationTest`: an admin adds a product that is announced on `product-created` and
+  listed, changes its price, takes it off sale and back; bad names and prices and unknown products
+  are refused. `ProductControllerTest` checks that customers cannot add or change products.
 - `OrderFlowIntegrationTest`: paid, declined, out of stock, cancel with refund and the
   cancellation sent to inventory, payment after cancellation,
   only the owner can cancel, each customer lists only their own orders, a two-product cart checked
@@ -259,7 +283,8 @@ This runs the unit tests and the integration tests against real PostgreSQL, Kafk
   to payment, an order for more than is in stock reserves nothing, a declined payment puts the
   stock back once, a cancellation arriving before the order means nothing is reserved, `/stock`
   needs a token, an admin restocks while a customer gets `403`, bad quantities and unknown
-  products are refused, unreadable message to the dead-letter topic.
+  products are refused, a new product starts at 0 and a repeated `ProductCreated` keeps its
+  stock, unreadable message to the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `StockReserved` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
 

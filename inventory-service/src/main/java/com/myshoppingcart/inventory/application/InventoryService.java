@@ -44,6 +44,11 @@ public class InventoryService {
         return stock.find(productId);
     }
 
+    /** A new product in the catalog starts with nothing in stock. Safe to call more than once. */
+    public void open(UUID productId) {
+        stock.open(productId);
+    }
+
     /** Adds stock for a product the shop already stocks; empty if it does not. */
     public Optional<StockItem> restock(UUID productId, int quantity, String by) {
         if (quantity < 1 || quantity > MAX_RESTOCK) {

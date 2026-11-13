@@ -28,7 +28,9 @@ class KafkaConfig {
                 TopicBuilder.name("payment-declined").build(),
                 TopicBuilder.name("payment-declined-dlt").build(),
                 TopicBuilder.name("order-cancelled").build(),
-                TopicBuilder.name("order-cancelled-dlt").build());
+                TopicBuilder.name("order-cancelled-dlt").build(),
+                TopicBuilder.name("product-created").build(),
+                TopicBuilder.name("product-created-dlt").build());
     }
 
     @Bean

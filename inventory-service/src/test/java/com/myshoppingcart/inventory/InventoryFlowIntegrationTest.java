@@ -167,6 +167,20 @@ class InventoryFlowIntegrationTest {
     }
 
     @Test
+    void aNewProductStartsWithNoStockAndKeepsItsStockIfAnnouncedAgain() throws Exception {
+        UUID product = UUID.randomUUID();
+        String created = "{\"productId\":\"%s\",\"name\":\"Milk Frother\",\"price\":39.90}".formatted(product);
+
+        kafkaTemplate.send("product-created", product.toString(), created);
+        await().atMost(Duration.ofSeconds(20)).until(() -> stockRow(product) != null);
+        assertThat(available(product)).isZero();
+
+        restock(product, "7", "admin").andExpect(status().isOk());
+        kafkaTemplate.send("product-created", product.toString(), created);
+        await().during(Duration.ofSeconds(2)).atMost(Duration.ofSeconds(5)).until(() -> available(product) == 7);
+    }
+
+    @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         UUID key = UUID.randomUUID();
         kafkaTemplate.send("order-created", key.toString(), "this is not JSON");
@@ -198,6 +212,11 @@ class InventoryFlowIntegrationTest {
         kafkaTemplate.send("order-created", order.toString(), """
                 {"orderId":"%s","customerId":"alice","amount":%d.00,"lines":[{"productId":"%s","quantity":%d}]}"""
                 .formatted(order, quantity * 10, product, quantity));
+    }
+
+    private Integer stockRow(UUID product) {
+        return jdbc.sql("SELECT available FROM stock WHERE product_id = :id").param("id", product)
+                .query(Integer.class).optional().orElse(null);
     }
 
     private int available(UUID product) {

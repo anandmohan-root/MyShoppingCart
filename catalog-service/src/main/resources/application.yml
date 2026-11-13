@@ -4,6 +4,8 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/catalog
     username: shop
+  kafka:
+    bootstrap-servers: localhost:9092
   security:
     oauth2:
       resourceserver:

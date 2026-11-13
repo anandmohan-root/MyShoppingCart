@@ -7,7 +7,8 @@
 #   5. a cart with two products is checked out as one paid order,
 #   6. an order sent twice with the same Idempotency-Key is placed once,
 #   7. an order for more than is in stock ends as OUT_OF_STOCK,
-#   8. an admin restocks a product, and a customer may not.
+#   8. an admin restocks a product, and a customer may not,
+#   9. an admin adds a product, restocks it, changes its price and takes it off sale.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -41,9 +42,9 @@ place() {
     -d "{\"items\":[{\"productId\":\"$1\",\"quantity\":$2}]}" | field id
 }
 
-# stock_of <productId>: prints how many are in stock
+# stock_of <productId>: prints how many are in stock, or nothing if the product has no stock entry yet
 stock_of() {
-  curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/stock/$1" | sed -n 's/.*"available":\([0-9]*\).*/\1/p'
+  curl -s -H "Authorization: Bearer $TOKEN" "$GATEWAY/stock/$1" | sed -n 's/.*"available":\([0-9]*\).*/\1/p'
 }
 
 # expect_stock <productId> <count>: waits up to 30 s for the stock level
@@ -159,4 +160,35 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/stock/$ESPRESSO_
 echo "  $SHOP_USER is refused with 403"
 expect_stock "$ESPRESSO_MACHINE" $((MACHINE_STOCK + 5))
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, and restocked by an admin only"
+echo "9. Adding a product as $SHOP_ADMIN, selling it, then taking it off sale ..."
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/products" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"Milk Frother","price":39.90}')
+[ "$CODE" = "403" ] || { echo "FAILED: a customer adding a product got $CODE, not 403"; exit 1; }
+echo "  $SHOP_USER is refused with 403"
+FROTHER=$(curl -s --fail -X POST "$GATEWAY/products" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"Milk Frother","price":39.90}' | field id)
+echo "  added Milk Frother $FROTHER"
+expect_stock "$FROTHER" 0
+NO_STOCK=$(place "$FROTHER" 1)
+expect_status "$NO_STOCK" OUT_OF_STOCK
+curl -s --fail -X POST "$GATEWAY/stock/$FROTHER/restock" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"quantity":3}' > /dev/null
+expect_stock "$FROTHER" 3
+curl -s --fail -X PATCH "$GATEWAY/products/$FROTHER" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"price":34.90}' > /dev/null
+SOLD=$(place "$FROTHER" 1)
+expect_status "$SOLD" PAID
+curl -s -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$SOLD" | grep -q '"unitPrice":34.90' \
+  || { echo "FAILED: order $SOLD was not charged the new price 34.90"; exit 1; }
+echo "  sold at the new price 34.90"
+expect_stock "$FROTHER" 2
+curl -s --fail -X PATCH "$GATEWAY/products/$FROTHER" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"onSale":false}' > /dev/null
+curl -s --fail -H "Authorization: Bearer $TOKEN" "$GATEWAY/products" | grep -q "$FROTHER" \
+  && { echo "FAILED: the off-sale product is still listed"; exit 1; }
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/orders" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d "{\"items\":[{\"productId\":\"$FROTHER\",\"quantity\":1}]}")
+[ "$CODE" = "400" ] || { echo "FAILED: ordering an off-sale product returned $CODE, not 400"; exit 1; }
+echo "  off sale: no longer listed, and ordering it returns 400"
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, and a product added, repriced and taken off sale"

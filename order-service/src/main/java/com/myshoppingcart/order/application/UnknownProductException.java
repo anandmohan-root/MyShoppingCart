@@ -5,6 +5,6 @@ import java.util.UUID;
 public class UnknownProductException extends RuntimeException {
 
     public UnknownProductException(UUID productId) {
-        super("unknown product " + productId);
+        super("product " + productId + " is unknown or not for sale");
     }
 }
