@@ -1,5 +1,6 @@
 package com.myshoppingcart.order;
 
+import com.myshoppingcart.order.adapter.in.web.KeycloakRealmRoles;
 import com.myshoppingcart.order.application.Carts;
 import com.myshoppingcart.order.application.ProductCatalog;
 import com.jayway.jsonpath.JsonPath;
@@ -21,6 +22,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -37,6 +39,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
@@ -342,11 +348,68 @@ class OrderFlowIntegrationTest {
     }
 
     @Test
+    void anAdminSeesEveryCustomersOrdersAndCanFilterByStatus() throws Exception {
+        String olivia = placeAs("olivia");
+        String peter = placeAs("peter");
+        send("payment-completed", peter);
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                mvc.perform(get("/orders/{id}", peter).with(jwt().jwt(j -> j.subject("peter"))))
+                        .andExpect(jsonPath("$.status").value("PAID")));
+
+        mvc.perform(get("/admin/orders").with(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", hasItems(olivia, peter)));
+        mvc.perform(get("/admin/orders").param("status", "PAID").with(admin()))
+                .andExpect(jsonPath("$[*].id", hasItem(peter)))
+                .andExpect(jsonPath("$[*].id", not(hasItem(olivia))))
+                .andExpect(jsonPath("$[*].status", everyItem(is("PAID"))));
+        mvc.perform(get("/admin/orders").param("status", "NOT_A_STATUS").with(admin()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void customersCannotUseTheAdminOrderEndpoints() throws Exception {
+        String orderId = placeAs("quinn");
+
+        mvc.perform(get("/admin/orders").with(customer("quinn"))).andExpect(status().isForbidden());
+        mvc.perform(post("/admin/orders/{id}/cancel", orderId).with(customer("quinn"))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anAdminCancelsAnotherCustomersPaidOrderAndItIsRefunded() throws Exception {
+        String orderId = placeAs("rosa");
+        send("payment-completed", orderId);
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                mvc.perform(get("/orders/{id}", orderId).with(jwt().jwt(j -> j.subject("rosa"))))
+                        .andExpect(jsonPath("$.status").value("PAID")));
+
+        mvc.perform(post("/admin/orders/{id}/cancel", orderId).with(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+
+        assertThat(readFor("refund-requested", orderId, 1)).hasSize(1);
+        mvc.perform(post("/admin/orders/{id}/cancel", orderId).with(admin())).andExpect(status().isConflict());
+        mvc.perform(post("/admin/orders/{id}/cancel", UUID.randomUUID()).with(admin())).andExpect(status().isNotFound());
+    }
+
+    @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         String key = UUID.randomUUID().toString();
         kafkaTemplate.send("payment-completed", key, "this is not JSON");
 
         assertThat(readFor("payment-completed-dlt", key, 1)).containsExactly("this is not JSON");
+    }
+
+    /** A token with the Keycloak realm role "admin", read the way the service reads it. */
+    private static RequestPostProcessor admin() {
+        return jwt().jwt(j -> j.subject("admin-1").claim("preferred_username", "test-admin")
+                        .claim("realm_access", Map.of("roles", List.of("admin"))))
+                .authorities(new KeycloakRealmRoles());
+    }
+
+    private static RequestPostProcessor customer(String subject) {
+        return jwt().jwt(j -> j.subject(subject).claim("realm_access", Map.of("roles", List.of("default-roles-shop"))))
+                .authorities(new KeycloakRealmRoles());
     }
 
     private String place() throws Exception {

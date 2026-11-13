@@ -113,6 +113,7 @@ function renderNav(user) {
     cartLink,
     link("orders", "My orders"),
     user.isAdmin ? link("admin", "Admin") : null,
+    user.isAdmin ? link("all-orders", "All orders") : null,
     el("span", { class: "user" }, user.name + (user.isAdmin ? " (admin)" : "")),
     el("button", { class: "secondary", onclick: signOut }, "Sign out"),
   ];
@@ -123,7 +124,8 @@ function renderNav(user) {
   }).catch(() => {});
 }
 
-const pages = { products: productsPage, cart: cartPage, orders: ordersPage, admin: adminPage };
+const pages = { products: productsPage, cart: cartPage, orders: ordersPage, admin: adminPage, "all-orders": allOrdersPage };
+const ADMIN_PAGES = ["admin", "all-orders"];
 
 async function render() {
   following?.abort();
@@ -143,7 +145,7 @@ async function render() {
     return;
   }
   const name = location.hash.slice(2) || "products";
-  const page = pages[name] && (name !== "admin" || user.isAdmin) ? pages[name] : productsPage;
+  const page = pages[name] && (!ADMIN_PAGES.includes(name) || user.isAdmin) ? pages[name] : productsPage;
   try {
     await page();
     if (page === ordersPage) {
@@ -289,8 +291,8 @@ async function ordersPage() {
 /**
  * Redraws "My orders" whenever order-service pushes a status change (GET /orders/events, a
  * server-sent event stream). fetch is used instead of EventSource because EventSource cannot send
- * the Authorization header. The server ends each stream after about 50 seconds; the page then
- * reconnects and redraws once, which also catches any change missed in between.
+ * the Authorization header. The page redraws once each time the stream opens, so no change is
+ * missed while connecting; the server ends each stream after about 50 seconds and the page reconnects.
  */
 async function followOrders(stop) {
   while (!stop.aborted) {
@@ -303,13 +305,15 @@ async function followOrders(stop) {
       if (!response.ok) {
         throw new Error(`order updates unavailable (${response.status})`);
       }
+      // The stream is registered before the server answers, so this redraw catches any change
+      // made between drawing the page and opening the stream.
+      await ordersPage();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
         if (chunk.value.includes("event:order-status")) {
           await ordersPage();
         }
       }
-      await ordersPage();
     } catch (error) {
       if (stop.aborted) {
         return;
@@ -318,6 +322,50 @@ async function followOrders(stop) {
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
+}
+
+let allOrdersStatus = "";
+
+/** Every customer's orders, newest first, for admins; filter by status, cancel any open one. */
+async function allOrdersPage() {
+  const query = allOrdersStatus ? `?status=${allOrdersStatus}` : "";
+  const [orders, products] = await Promise.all([api(`/admin/orders${query}`), api("/products?includeOffSale=true")]);
+  const names = new Map(products.map(product => [product.id, product.name]));
+  const filter = el("select", {
+    "aria-label": "Status",
+    onchange: () => {
+      allOrdersStatus = filter.value;
+      go("all-orders");
+    },
+  }, el("option", { value: "" }, "All statuses"),
+    Object.entries(STATUS).map(([value, label]) => el("option", { value, selected: value === allOrdersStatus }, label)));
+  const rows = orders.map(order => el("tr", {},
+    el("td", {}, new Date(order.createdAt).toLocaleString()),
+    el("td", { title: order.customerId }, order.customerId.slice(0, 8)),
+    el("td", {}, order.lines.map(line => `${names.get(line.productId) ?? "Unknown product"} × ${line.quantity}`).join(", ")),
+    el("td", { class: "num" }, money(order.total)),
+    el("td", {}, el("span", { class: `status ${order.status.toLowerCase()}` }, STATUS[order.status] ?? order.status)),
+    el("td", {}, order.status === "PENDING" || order.status === "PAID"
+      ? el("button", {
+        class: "link",
+        onclick: action(async () => {
+          if (!confirm(order.status === "PAID" ? "Cancel this customer's order and refund the payment?" : "Cancel this customer's order?")) {
+            return;
+          }
+          await api(`/admin/orders/${order.id}/cancel`, { method: "POST" });
+          go("all-orders", "Order cancelled; the customer is emailed.");
+        }),
+      }, "Cancel")
+      : "")));
+  main.replaceChildren(
+    el("h1", {}, "Admin: all orders"),
+    el("div", { class: "row" }, filter, el("span", { class: "hint" }, `${orders.length} shown, newest first (at most 50)`)),
+    orders.length
+      ? el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Placed"), el("th", {}, "Customer"), el("th", {}, "Items"),
+          el("th", { class: "num" }, "Total"), el("th", {}, "Status"), el("th", {}, ""))),
+        el("tbody", {}, rows))
+      : el("p", {}, "No orders with this status."));
 }
 
 async function adminPage() {

@@ -3,6 +3,8 @@ package com.myshoppingcart.order.application;
 import com.myshoppingcart.order.domain.Order;
 import com.myshoppingcart.order.domain.OrderLine;
 import com.myshoppingcart.order.domain.OrderStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +18,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     public static final int MAX_LIST = 100;
 
@@ -93,15 +97,30 @@ public class OrderService {
      */
     @Transactional
     public Optional<Order> cancel(UUID orderId, String customerId) {
-        return find(orderId, customerId).map(order -> {
-            Order cancelled = order.cancelled();
-            change(order, cancelled);
-            orders.announceCancellation(order);
-            if (order.status() == OrderStatus.PAID) {
-                orders.requestRefund(order);
-            }
-            return cancelled;
-        });
+        return find(orderId, customerId).map(this::cancel);
+    }
+
+    /** Every customer's orders, for admins; {@code status} null means any status. */
+    public List<Order> listAll(OrderStatus status, int limit) {
+        return orders.findAll(status, Math.clamp(limit, 1, MAX_LIST));
+    }
+
+    /** An admin cancels any customer's order, with the same stock return and refund. */
+    @Transactional
+    public Optional<Order> cancelAsAdmin(UUID orderId, String admin) {
+        Optional<Order> cancelled = orders.findById(orderId).map(this::cancel);
+        cancelled.ifPresent(order -> log.info("{} cancelled order {} of customer {}", admin, orderId, order.customerId()));
+        return cancelled;
+    }
+
+    private Order cancel(Order order) {
+        Order cancelled = order.cancelled();
+        change(order, cancelled);
+        orders.announceCancellation(order);
+        if (order.status() == OrderStatus.PAID) {
+            orders.requestRefund(order);
+        }
+        return cancelled;
     }
 
     /**

@@ -26,7 +26,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order, inventory and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog, order and inventory |
-| Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may add or change products (`SecurityConfig` in catalog) and restock (`SecurityConfig` in inventory) |
+| Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may add or change products (`SecurityConfig` in catalog), restock (`SecurityConfig` in inventory), and see or cancel every customer's orders under `/admin/orders` (`SecurityConfig` in order) |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Browser sign-in (OpenID Connect, PKCE) | `storefront/auth.js`: authorization code flow with PKCE for the public Keycloak client `shop-web`, written with the browser's Web Crypto API (no library). Keycloak only returns to `http://localhost:8000/` |
@@ -38,7 +38,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Timeout, retry, circuit breaker | `order-service` `CatalogClient` + `resilience4j` / `spring.http.client` in its `application.yml` |
 | Observability (traces, metrics, logs) | OpenTelemetry Java agent in `Dockerfile`, Grafana LGTM container |
 | Unit tests and Testcontainers integration tests | `*Test` and `*IntegrationTest` in each service |
-| Browser tests | Playwright in `e2e/`: a customer buys, sees the order paid and cancels it; an admin adds, restocks and takes a product off sale. `scripts/browser-tests.sh` runs them in Microsoft's Playwright container, so no browser needs installing |
+| Browser tests | Playwright in `e2e/`: a customer buys, sees the order paid and cancels it; an admin adds, restocks and takes a product off sale; an admin cancels a customer's paid order while the customer's page is open, and that page shows it without reloading. `scripts/browser-tests.sh` runs them in Microsoft's Playwright container, so no browser needs installing |
 
 ## Mapping to the reference architecture
 
@@ -72,7 +72,9 @@ shows which parts of it MyShoppingCart runs today.
 - Stock is reserved when the order is placed, before payment.
 - A product taken off sale stays in carts until checkout, which then fails with `400` for that
   product. Off-sale products keep their stock; nothing is sold from it.
-- Catalog and inventory check roles; order and payment accept any signed-in user.
+- Payment has no HTTP API; the other services check roles where admins act.
+- The admin's order list shows customers by the start of their Keycloak user id: order-service
+  does not store names or email addresses.
 - The storefront keeps its tokens in the tab's `sessionStorage`; closing the tab signs you out of
   the shop but not of Keycloak.
 - Live order updates reach only browsers connected to the order-service instance that handled
@@ -132,7 +134,9 @@ The script signs in as the test user and checks these journeys through Kong:
   back to it;
 - the emails: the cancelled order from the start got exactly three (confirmed, cancelled, refund);
 - the gateway: 120 requests at once are partly refused with `429`, a 2 MB body with `413`, and the
-  mailbox without its password with `401`.
+  mailbox without its password with `401`;
+- as the admin: the paid cart order appears among all paid orders and is cancelled; the customer
+  is refused the admin endpoint.
 
 ### Shop in the browser
 
@@ -140,7 +144,9 @@ Open http://localhost:8000/ and sign in with `SHOP_USER` and `SHOP_USER_PASSWORD
 Browse the products and their stock, add some to the cart, check out, and watch the order move
 from Processing to Paid on **My orders** as soon as payment completes, where you can also cancel it. Sign in as `SHOP_ADMIN`
 instead to get the **Admin** page: add products, change names and prices, restock, and take
-products off sale or put them back.
+products off sale or put them back. **All orders** lists every customer's orders, newest first,
+filtered by status, and cancels any pending or paid one (a paid order is refunded, and the
+customer's open My orders page shows the change at once).
 
 Every order step sends the customer an email (confirmed, payment declined, out of stock,
 cancelled, refund on its way). Read them in the test mailbox at http://localhost:8000/mail/,

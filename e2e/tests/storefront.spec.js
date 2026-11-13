@@ -19,10 +19,8 @@ test.beforeAll(() => {
   }
 });
 
-test("a customer buys a product, sees it paid, and cancels it", async ({ page }) => {
-  await signIn(page, SHOP_USER, SHOP_USER_PASSWORD);
-  await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
-
+/** Buys one bag of coffee beans through the cart and waits until My orders shows it paid. */
+async function buyBeansAndSeeThemPaid(page) {
   const beans = page.locator("article.card", { hasText: "Coffee Beans 1kg" });
   await beans.getByRole("button", { name: "Add to cart" }).click();
   await expect(page.locator("#notice")).toContainText("in your cart");
@@ -31,10 +29,19 @@ test("a customer buys a product, sees it paid, and cancels it", async ({ page })
   await expect(page.getByRole("cell", { name: "Coffee Beans 1kg" })).toBeVisible();
   await page.getByRole("button", { name: "Check out" }).click();
 
-  // Newest order first; it refreshes by itself until payment is done.
+  // Newest order first; the page updates by itself when payment completes.
   const order = page.locator("tbody tr").first();
   await expect(order).toContainText("Coffee Beans 1kg");
   await expect(order).toContainText("Paid", { timeout: 30_000 });
+  return order;
+}
+
+test("a customer buys a product, sees it paid, and cancels it", async ({ page }) => {
+  await signIn(page, SHOP_USER, SHOP_USER_PASSWORD);
+  await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "All orders" })).toHaveCount(0);
+
+  const order = await buyBeansAndSeeThemPaid(page);
 
   page.once("dialog", dialog => dialog.accept());
   await order.getByRole("button", { name: "Cancel" }).click();
@@ -66,4 +73,24 @@ test("an admin adds a product, restocks it and takes it off sale", async ({ page
   await (await row()).getByRole("button", { name: "Take off sale" }).click();
   await expect(page.locator("#notice")).toContainText(`${name} is off sale`);
   await expect((await row()).getByRole("button", { name: "Put on sale" })).toBeVisible();
+});
+
+test("an admin cancels a customer's paid order, and the customer's page shows it at once", async ({ browser }) => {
+  const customer = await (await browser.newContext()).newPage();
+  const admin = await (await browser.newContext()).newPage();
+  await signIn(customer, SHOP_USER, SHOP_USER_PASSWORD);
+  const order = await buyBeansAndSeeThemPaid(customer);
+
+  await signIn(admin, SHOP_ADMIN, SHOP_ADMIN_PASSWORD);
+  await admin.getByRole("link", { name: "All orders" }).click();
+  await admin.getByLabel("Status").selectOption("PAID");
+  // Newest paid order first: the one the customer just placed.
+  const row = admin.locator("tbody tr").first();
+  await expect(row).toContainText("Coffee Beans 1kg × 1");
+  admin.once("dialog", dialog => dialog.accept());
+  await row.getByRole("button", { name: "Cancel" }).click();
+  await expect(admin.locator("#notice")).toContainText("Order cancelled");
+
+  // No reload: the customer's open page is told by the server.
+  await expect(order).toContainText("Cancelled", { timeout: 15_000 });
 });

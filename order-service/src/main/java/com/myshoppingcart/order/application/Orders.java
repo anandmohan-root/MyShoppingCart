@@ -1,6 +1,7 @@
 package com.myshoppingcart.order.application;
 
 import com.myshoppingcart.order.domain.Order;
+import com.myshoppingcart.order.domain.OrderStatus;
 
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +24,9 @@ public interface Orders {
 
     /** The customer's most recent orders, newest first. */
     List<Order> findByCustomer(String customerId, int limit);
+
+    /** Every customer's most recent orders, newest first; only those with {@code status} unless it is null. */
+    List<Order> findAll(OrderStatus status, int limit);
 
     /**
      * Saves {@code after} only if the stored order still has the status of {@code before}.

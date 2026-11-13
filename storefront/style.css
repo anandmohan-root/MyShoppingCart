@@ -64,7 +64,7 @@ button.secondary { background: var(--surface); color: var(--accent); }
 button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-input { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; }
+input, select { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; }
 input[type="number"] { width: 5.5rem; }
 input[type="text"] { width: 14rem; }
 

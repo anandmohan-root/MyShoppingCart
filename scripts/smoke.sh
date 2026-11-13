@@ -11,7 +11,8 @@
 #   9. an admin adds a product, restocks it, changes its price and takes it off sale,
 #  10. the browser storefront is served with its security headers and can start a sign-in,
 #  11. the customer was emailed about the order from steps 1 and 3: paid, cancelled, refunded,
-#  12. Kong turns away request floods and oversized bodies, and the mailbox needs its password.
+#  12. Kong turns away request floods and oversized bodies, and the mailbox needs its password,
+#  13. an admin sees every customer's orders and cancels the cart order from step 5; a customer may not.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -237,4 +238,13 @@ LIMITED=$(curl -s --parallel --parallel-immediate --parallel-max 120 -w '%{http_
 echo "  $LIMITED of 120 requests sent at once got 429 Too Many Requests"
 sleep 2  # let the per-second limit reset before anything else calls the gateway
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, the storefront served, the customer emailed, and the gateway protected"
+echo "13. Cancelling the cart order from step 5 as $SHOP_ADMIN ..."
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$GATEWAY/admin/orders")
+[ "$CODE" = "403" ] || { echo "FAILED: a customer listing all orders got $CODE, not 403"; exit 1; }
+echo "  $SHOP_USER is refused with 403"
+curl -s --fail -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY/admin/orders?status=PAID" | grep -q "\"id\":\"$CHECKED_OUT\"" \
+  || { echo "FAILED: order $CHECKED_OUT is not among the paid orders the admin sees"; exit 1; }
+curl -s --fail -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY/admin/orders/$CHECKED_OUT/cancel" > /dev/null
+expect_status "$CHECKED_OUT" CANCELLED
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, the storefront served, the customer emailed, the gateway protected, and an order cancelled by an admin"

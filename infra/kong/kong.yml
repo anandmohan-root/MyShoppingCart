@@ -42,7 +42,7 @@ services:
     url: http://order-service:8080
     routes:
       - name: orders
-        paths: ["/orders", "/cart"]
+        paths: ["/orders", "/cart", "/admin/orders"]
         strip_path: false
 
   # The test mailbox (Mailpit), behind its own sign-in (MAILBOX_USER in .env).

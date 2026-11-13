@@ -144,6 +144,17 @@ class JdbcOrders implements Orders {
                 .list());
     }
 
+    // shortcut: no index serves this admin query (it reads and sorts all orders); add one on
+    // (status, created_at) when the orders table grows large.
+    @Override
+    public List<Order> findAll(OrderStatus status, int limit) {
+        var query = status == null
+                ? jdbc.sql("SELECT " + COLUMNS + " FROM orders ORDER BY created_at DESC LIMIT :limit")
+                : jdbc.sql("SELECT " + COLUMNS + " FROM orders WHERE status = :status ORDER BY created_at DESC LIMIT :limit")
+                        .param("status", status.name());
+        return withLines(query.param("limit", limit).query(ORDER_MAPPER).list());
+    }
+
     /** Loads the lines of all the given orders in one query, keeping the orders' sequence. */
     private List<Order> withLines(List<OrderRow> rows) {
         if (rows.isEmpty()) {
