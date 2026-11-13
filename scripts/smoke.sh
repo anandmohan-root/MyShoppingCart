@@ -8,7 +8,8 @@
 #   6. an order sent twice with the same Idempotency-Key is placed once,
 #   7. an order for more than is in stock ends as OUT_OF_STOCK,
 #   8. an admin restocks a product, and a customer may not,
-#   9. an admin adds a product, restocks it, changes its price and takes it off sale.
+#   9. an admin adds a product, restocks it, changes its price and takes it off sale,
+#  10. the browser storefront is served with its security headers and can start a sign-in.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -191,4 +192,16 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/orders" -H "Auth
 [ "$CODE" = "400" ] || { echo "FAILED: ordering an off-sale product returned $CODE, not 400"; exit 1; }
 echo "  off sale: no longer listed, and ordering it returns 400"
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, and a product added, repriced and taken off sale"
+echo "10. Checking the browser storefront ..."
+PAGE=$(curl -s -D - --fail "$GATEWAY/")
+echo "$PAGE" | grep -qi "^content-security-policy: default-src 'self'" || { echo "FAILED: the storefront has no Content-Security-Policy"; exit 1; }
+echo "$PAGE" | grep -q "<title>MyShoppingCart</title>" || { echo "FAILED: the storefront page did not load"; exit 1; }
+CHALLENGE=$(printf 'a%.0s' $(seq 43))
+SIGN_IN="$GATEWAY/realms/shop/protocol/openid-connect/auth?client_id=shop-web&response_type=code&scope=openid&code_challenge=$CHALLENGE&code_challenge_method=S256"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SIGN_IN&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2F")
+[ "$CODE" = "200" ] || { echo "FAILED: the storefront sign-in page returned $CODE"; exit 1; }
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SIGN_IN&redirect_uri=http%3A%2F%2Fevil.example%2F")
+[ "$CODE" = "400" ] || { echo "FAILED: Keycloak accepted a foreign redirect ($CODE)"; exit 1; }
+echo "  served with a Content-Security-Policy; sign-in starts, and only returns to this site"
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, and the storefront served"

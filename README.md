@@ -27,6 +27,8 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may add or change products (`SecurityConfig` in catalog) and restock (`SecurityConfig` in inventory) |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
+| Browser sign-in (OpenID Connect, PKCE) | `storefront/auth.js`: authorization code flow with PKCE for the public Keycloak client `shop-web`, written with the browser's Web Crypto API (no library). Keycloak only returns to `http://localhost:8000/` |
+| Single-page app behind the gateway | `storefront/` is served by nginx through Kong on the same origin as the API, so no CORS rules are needed; nginx sends a strict Content-Security-Policy (`infra/nginx/storefront.conf`) and the pages are built without `innerHTML` |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
 | Timeout, retry, circuit breaker | `order-service` `CatalogClient` + `resilience4j` / `spring.http.client` in its `application.yml` |
@@ -66,6 +68,12 @@ shows which parts of it MyShoppingCart runs today.
 - A product taken off sale stays in carts until checkout, which then fails with `400` for that
   product. Off-sale products keep their stock; nothing is sold from it.
 - Catalog and inventory check roles; order and payment accept any signed-in user.
+- The storefront keeps its tokens in the tab's `sessionStorage`; closing the tab signs you out of
+  the shop but not of Keycloak. It shows order status by asking again every 2 seconds while an
+  order is processing, not by push.
+- The storefront only works at `http://localhost:8000/`, the one address Keycloak returns to.
+- Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
+  orders survive restarts; orders placed before the ids were fixed no longer show up.
 - If you started the stack before inventory was added, its database volume has no `inventory`
   database. Run `docker compose down -v` once. If your `.env` predates the admin user, copy the
   `SHOP_ADMIN` lines from `.env.example` into it.
@@ -100,13 +108,29 @@ The first run downloads images and builds the services, which takes several minu
 bash scripts/smoke.sh
 ```
 
-The script signs in as the test user and checks these journeys through Kong: an order that is
-paid, an order above the card limit that is declined, a paid order that is cancelled and
-refunded, the list of the customer's orders, a cart of two products checked out as one
-order, an order sent twice with one `Idempotency-Key`, an order for more than is in stock, and
-a restock by the admin that the customer is refused, and a product the admin adds, restocks,
-reprices and takes off sale.
-After each step it checks the stock went down or came back. The main steps by hand:
+The script signs in as the test user and checks these journeys through Kong:
+
+- an order that is paid, one above the card limit that is declined, and a paid order that is
+  cancelled and refunded, checking after each that the stock went down or came back;
+- the list of the customer's orders, a two-product cart checked out as one order, and an order
+  sent twice with one `Idempotency-Key`;
+- an order for more than is in stock;
+- as the admin: a restock the customer is refused, and a product that is added, restocked,
+  repriced and taken off sale;
+- the storefront: served with its Content-Security-Policy, and Keycloak only sending a sign-in
+  back to it.
+
+### Shop in the browser
+
+Open http://localhost:8000/ and sign in with `SHOP_USER` and `SHOP_USER_PASSWORD` from `.env`.
+Browse the products and their stock, add some to the cart, check out, and watch the order move
+from Processing to Paid on **My orders**, where you can also cancel it. Sign in as `SHOP_ADMIN`
+instead to get the **Admin** page: add products, change names and prices, restock, and take
+products off sale or put them back.
+
+### Use the API directly
+
+The main steps by hand:
 
 ```bash
 source .env

@@ -84,6 +84,11 @@ class CatalogIntegrationTest {
         mvc.perform(get("/products/{id}", id).with(jwt())).andExpect(status().isNotFound());
         mvc.perform(get("/products").with(jwt())).andExpect(jsonPath("$[*].id", not(hasItem(id))));
 
+        mvc.perform(get("/products").param("includeOffSale", "true").with(admin()))
+                .andExpect(jsonPath("$[*].id", hasItem(id)));
+        mvc.perform(get("/products").param("includeOffSale", "true").with(jwt()))
+                .andExpect(status().isForbidden());
+
         asAdmin(patch("/products/{id}", id), "{\"onSale\":true}");
         mvc.perform(get("/products/{id}", id).with(jwt())).andExpect(status().isOk());
     }
@@ -105,10 +110,13 @@ class CatalogIntegrationTest {
     }
 
     private ResultActions asAdmin(MockHttpServletRequestBuilder request, String body) throws Exception {
-        RequestPostProcessor admin = jwt()
+        return mvc.perform(request.with(admin()).contentType(MediaType.APPLICATION_JSON).content(body));
+    }
+
+    private static RequestPostProcessor admin() {
+        return jwt()
                 .jwt(j -> j.claim("realm_access", Map.of("roles", List.of("admin"))).claim("preferred_username", "test-admin"))
                 .authorities(new KeycloakRealmRoles());
-        return mvc.perform(request.with(admin).contentType(MediaType.APPLICATION_JSON).content(body));
     }
 
     private static List<String> readFor(String topic, String key) {

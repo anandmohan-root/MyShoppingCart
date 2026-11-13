@@ -5,6 +5,8 @@ import com.myshoppingcart.catalog.domain.Product;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -37,9 +40,16 @@ class ProductController {
         this.catalog = catalog;
     }
 
+    /** Products on sale; with {@code includeOffSale=true}, every product, for admins only. */
     @GetMapping("/products")
-    List<Product> all() {
-        return catalog.onSale();
+    List<Product> all(@RequestParam(defaultValue = "false") boolean includeOffSale, Authentication caller) {
+        if (!includeOffSale) {
+            return catalog.onSale();
+        }
+        if (caller.getAuthorities().stream().noneMatch(a -> a.getAuthority().equals("ROLE_admin"))) {
+            throw new AccessDeniedException("only admins see products that are off sale");
+        }
+        return catalog.all();
     }
 
     /** Off-sale products are not found, so they cannot be ordered or put in a cart. */

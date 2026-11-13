@@ -12,6 +12,9 @@ public interface Products {
     /** Products on sale, by name. */
     List<Product> findOnSale();
 
+    /** Every product, on sale or not, by name. */
+    List<Product> findAll();
+
     /** Any product, on sale or not. */
     Optional<Product> findById(UUID id);
 

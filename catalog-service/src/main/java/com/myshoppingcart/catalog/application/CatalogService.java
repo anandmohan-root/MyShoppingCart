@@ -26,6 +26,11 @@ public class CatalogService {
         return products.findOnSale();
     }
 
+    /** Every product, including those off sale; for admins. */
+    public List<Product> all() {
+        return products.findAll();
+    }
+
     /** A product customers can order; off-sale products are not found. */
     public Optional<Product> findOnSale(UUID id) {
         return products.findById(id).filter(Product::onSale);

@@ -40,6 +40,11 @@ class JdbcProducts implements Products {
     }
 
     @Override
+    public List<Product> findAll() {
+        return jdbc.sql("SELECT id, name, price, on_sale FROM product ORDER BY name").query(MAPPER).list();
+    }
+
+    @Override
     public Optional<Product> findById(UUID id) {
         return jdbc.sql("SELECT id, name, price, on_sale FROM product WHERE id = :id").param("id", id).query(MAPPER).optional();
     }

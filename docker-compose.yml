@@ -56,6 +56,13 @@ services:
       interval: 5s
       retries: 20
 
+  # The browser storefront: static files only, reached through Kong at http://localhost:8000/.
+  storefront:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./storefront:/usr/share/nginx/html:ro
+      - ./infra/nginx/storefront.conf:/etc/nginx/conf.d/default.conf:ro
+
   # Shopping carts. Nothing else is kept here, so losing it only empties carts.
   redis:
     image: redis:7.4-alpine

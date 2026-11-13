@@ -8,10 +8,28 @@
       "publicClient": true,
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": false
+    },
+    {
+      "clientId": "shop-web",
+      "name": "MyShoppingCart storefront",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8000/"
+      ],
+      "webOrigins": [
+        "http://localhost:8000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/"
+      }
     }
   ],
   "users": [
     {
+      "id": "a11ce000-0000-4000-8000-000000000001",
       "username": "${SHOP_USER}",
       "enabled": true,
       "emailVerified": true,
@@ -27,6 +45,7 @@
       ]
     },
     {
+      "id": "ad000000-0000-4000-8000-000000000002",
       "username": "${SHOP_ADMIN}",
       "enabled": true,
       "emailVerified": true,

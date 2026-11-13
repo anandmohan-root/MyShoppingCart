@@ -7,7 +7,8 @@ services:
     url: http://keycloak:8080
     routes:
       - name: keycloak
-        paths: ["/realms"]
+        # /resources serves the sign-in page's styles and scripts.
+        paths: ["/realms", "/resources"]
         strip_path: false
 
   - name: catalog
@@ -29,4 +30,13 @@ services:
     routes:
       - name: orders
         paths: ["/orders", "/cart"]
+        strip_path: false
+
+  # The browser storefront. Kong picks the longest matching path, so the API routes above win
+  # and everything else is the storefront, on the same origin as the API (no CORS needed).
+  - name: storefront
+    url: http://storefront:80
+    routes:
+      - name: storefront
+        paths: ["/"]
         strip_path: false

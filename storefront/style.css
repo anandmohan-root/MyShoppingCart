@@ -1,0 +1,84 @@
+:root {
+  --ink: #201f1e;
+  --muted: #605e5c;
+  --line: #e1dfdd;
+  --surface: #ffffff;
+  --page: #f3f2f1;
+  --accent: #0078d4;
+  --accent-ink: #ffffff;
+  --ok: #107c10;
+  --warn: #986f0b;
+  --bad: #d13438;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--page);
+}
+
+body { margin: 0; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.75rem 2rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { font-weight: 700; font-size: 1.25rem; color: var(--ink); text-decoration: none; }
+
+nav { display: flex; align-items: center; gap: 1.25rem; flex: 1; }
+nav a { color: var(--muted); text-decoration: none; padding: 0.25rem 0; border-bottom: 2px solid transparent; }
+nav a.active, nav a:hover { color: var(--ink); border-bottom-color: var(--accent); }
+nav .user { margin-left: auto; color: var(--muted); }
+
+main { max-width: 64rem; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
+h1 { font-size: 1.6rem; margin: 0.5rem 0 1.25rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
+
+#notice { max-width: 60rem; margin: 1rem auto 0; padding: 0.75rem 1rem; border-radius: 6px; }
+#notice.ok { background: #dff6dd; color: #0b5a0b; }
+#notice.error { background: #fde7e9; color: #a4262c; }
+
+.welcome { text-align: center; padding: 4rem 0; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; }
+.card h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+.price { font-size: 1.3rem; font-weight: 600; margin: 0.25rem 0; }
+.stock { color: var(--ok); margin: 0 0 0.75rem; }
+.stock.out { color: var(--bad); }
+
+.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+button {
+  font: inherit;
+  padding: 0.45rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+button.secondary { background: var(--surface); color: var(--accent); }
+button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; }
+input[type="number"] { width: 5.5rem; }
+input[type="text"] { width: 14rem; }
+
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+th, td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font-weight: 600; font-size: 0.9rem; }
+.num { text-align: right; }
+tr.off-sale td { color: var(--muted); background: #faf9f8; }
+
+.total { font-size: 1.2rem; font-weight: 600; text-align: right; margin: 1rem 0 0.25rem; }
+.hint { color: var(--muted); text-align: right; margin: 0 0 1rem; }
+
+.status { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+.status.pending { background: #fff4ce; color: var(--warn); }
+.status.paid { background: #dff6dd; color: var(--ok); }
+.status.payment_declined, .status.out_of_stock { background: #fde7e9; color: var(--bad); }
+.status.cancelled { background: var(--page); color: var(--muted); }
