@@ -93,7 +93,7 @@ class OrderFlowIntegrationTest {
     @Test
     void orderBecomesPaidAfterPaymentCompleted() throws Exception {
         String response = mvc.perform(post("/orders")
-                        .with(jwt().jwt(j -> j.subject("alice")))
+                        .with(jwt().jwt(j -> j.subject("alice").claim("email", "alice@example.com")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(itemsJson(PRODUCT, 2)))
                 .andExpect(status().isCreated())
@@ -107,6 +107,7 @@ class OrderFlowIntegrationTest {
         assertThat(JsonPath.<Double>read(orderCreated, "$.amount")).isEqualTo(37.5);
         assertThat(JsonPath.<String>read(orderCreated, "$.lines[0].productId")).isEqualTo(PRODUCT.toString());
         assertThat(JsonPath.<Integer>read(orderCreated, "$.lines[0].quantity")).isEqualTo(2);
+        assertThat(JsonPath.<String>read(orderCreated, "$.customerEmail")).isEqualTo("alice@example.com");
 
         send("payment-completed", orderId);
         awaitStatus(orderId, "PAID");

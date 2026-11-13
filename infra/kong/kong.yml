@@ -32,6 +32,14 @@ services:
         paths: ["/orders", "/cart"]
         strip_path: false
 
+  # The test mailbox (Mailpit). Development only: anyone who can reach port 8000 can read it.
+  - name: mailbox
+    url: http://mailpit:8025
+    routes:
+      - name: mailbox
+        paths: ["/mail"]
+        strip_path: false
+
   # The browser storefront. Kong picks the longest matching path, so the API routes above win
   # and everything else is the storefront, on the same origin as the API (no CORS needed).
   - name: storefront

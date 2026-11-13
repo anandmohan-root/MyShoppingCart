@@ -68,7 +68,7 @@ public class CartService {
      * ordered, returns that order. If emptying the cart fails, the order still stands: the failure
      * is logged, and the cart is emptied on the customer's next visit to it.
      */
-    public Order checkout(String customerId) {
+    public Order checkout(String customerId, String customerEmail) {
         Carts.Cart cart = carts.get(customerId);
         if (cart.id() != null) {
             var existing = orders.findByIdempotencyKey(customerId, keyOf(cart));
@@ -80,7 +80,7 @@ public class CartService {
         if (cart.quantities().isEmpty()) {
             throw new EmptyCartException();
         }
-        Order order = orders.place(customerId, toItems(cart.quantities()), keyOf(cart));
+        Order order = orders.place(customerId, customerEmail, toItems(cart.quantities()), keyOf(cart));
         emptyAfterOrder(customerId);
         return order;
     }

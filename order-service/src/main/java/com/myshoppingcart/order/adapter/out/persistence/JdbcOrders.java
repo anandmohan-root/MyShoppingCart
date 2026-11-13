@@ -29,18 +29,18 @@ class JdbcOrders implements Orders {
     static final String REFUND_REQUESTED_TOPIC = "refund-requested";
     static final String ORDER_CANCELLED_TOPIC = "order-cancelled";
 
-    /** The OrderCreated message contract, as consumed by inventory-service. */
-    record OrderCreated(UUID orderId, String customerId, BigDecimal amount, List<Line> lines) {
+    /** The OrderCreated message contract, as consumed by inventory-service and notification-service. */
+    record OrderCreated(UUID orderId, String customerId, String customerEmail, BigDecimal amount, List<Line> lines) {
 
         record Line(UUID productId, int quantity) {
         }
     }
 
-    /** The OrderCancelled message contract, as consumed by inventory-service. */
+    /** The OrderCancelled message contract, as consumed by inventory-service and notification-service. */
     record OrderCancelled(UUID orderId) {
     }
 
-    /** The RefundRequested message contract, as consumed by payment-service. */
+    /** The RefundRequested message contract, as consumed by payment-service and notification-service. */
     record RefundRequested(UUID orderId, BigDecimal amount) {
     }
 
@@ -59,7 +59,7 @@ class JdbcOrders implements Orders {
      */
     @Override
     @Transactional
-    public void create(Order order, String idempotencyKey) {
+    public void create(Order order, String idempotencyKey, String customerEmail) {
         try {
             jdbc.sql("""
                             INSERT INTO orders (id, customer_id, total, status, created_at, idempotency_key)
@@ -91,7 +91,7 @@ class JdbcOrders implements Orders {
         jdbc.sql("INSERT INTO outbox (topic, message_key, payload) VALUES (:topic, :key, :payload)")
                 .param("topic", ORDER_CREATED_TOPIC)
                 .param("key", order.id().toString())
-                .param("payload", toJson(new OrderCreated(order.id(), order.customerId(), order.total(),
+                .param("payload", toJson(new OrderCreated(order.id(), order.customerId(), customerEmail, order.total(),
                         order.lines().stream().map(l -> new OrderCreated.Line(l.productId(), l.quantity())).toList())))
                 .update();
     }

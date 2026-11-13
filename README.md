@@ -1,10 +1,10 @@
 # MyShoppingCart
 
 MyShoppingCart is an online shopping application built on the on-premises shopping platform
-architecture: a product catalog, a shopping cart, ordering, stock and payment, with sign-in through Keycloak and every
+architecture: a product catalog, a shopping cart, ordering, stock, payment and email notifications, with sign-in through Keycloak and every
 request entering through Kong. It runs in Docker containers and starts with one Docker Compose command.
 
-![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog, order and inventory services; order-service keeps carts in Redis and publishes OrderCreated to Kafka through an outbox, inventory-service reserves the stock and publishes StockReserved, payment-service records the payment and publishes PaymentCompleted, and every service sends telemetry to Grafana.](docs/architecture.png)
+![MyShoppingCart architecture: Kong routes sign-in to Keycloak and requests to the catalog, order and inventory services; order-service keeps carts in Redis and publishes OrderCreated to Kafka through an outbox, inventory-service reserves the stock and publishes StockReserved, payment-service records the payment and publishes PaymentCompleted, notification-service emails the customer through Mailpit, and every service sends telemetry to Grafana.](docs/architecture.png)
 
 The numbers follow one order from sign-in to `PAID`; the key under the diagram explains each step. To change the
 diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again as `docs/architecture.png`.
@@ -14,9 +14,11 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Concept | Where to look |
 |---|---|
 | Hexagonal layout (domain, application ports, adapters in/out) | every service: `domain`, `application`, `adapter/in`, `adapter/out` |
-| Database per service | `infra/postgres/init.sql`, one Flyway migration per service |
+| Database per service | `infra/postgres/init.sql` creates any missing database on every start (the `databases` service in `docker-compose.yml`); one Flyway migration per service |
 | Transactional outbox | Every service: `JdbcProducts`, `JdbcOrders`, `OutboxInventoryEvents` and `OutboxPaymentEvents` write the event with the data, `OutboxRelay` publishes it |
 | Keeping services in step with events | A product added to the catalog publishes `ProductCreated`; inventory opens its stock at 0 (`ProductCreatedListener`), without either service calling the other |
+| Adding a service by listening to events | notification-service reads events the other services already publish and emails the customer; no other service knows it exists (`OrderEventsListener`). `OrderCreated` carries the customer's email from their token (event-carried state), so it needs no access to Keycloak |
+| Exactly one email per event | A `sent_notification` row per order and email kind is written before sending, in the same transaction; a repeated event sends nothing, and a failed send rolls the row back so the event is retried (`NotificationService.notify`) |
 | Event-driven saga (choreography) over Kafka | `OrderCreated` -> inventory -> `StockReserved` -> payment -> `PaymentCompleted` (order `PAID`) or `PaymentDeclined` (order `PAYMENT_DECLINED`); or `StockRejected` (order `OUT_OF_STOCK`, nothing charged) |
 | Saga compensation | A declined payment or a cancellation (`OrderCancelled`) puts the stock back (`InventoryService.release`). Cancelling a paid order, or a payment arriving after cancellation, also sends `RefundRequested`; payment-service refunds. `OrderService.cancel` / `paymentCompleted` |
 | Idempotent consumer | `PaymentService.payFor` + unique `order_id` in `V1__payment.sql`; one `reservation` row per order in inventory, so events about an order are safe to repeat or arrive in any order (a cancellation before the reservation leaves a marker, and nothing is reserved later); `refund` and the order status changes are safe to repeat |
@@ -47,7 +49,7 @@ shows which parts of it MyShoppingCart runs today.
 |---|---|---|
 | Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
 | Keycloak | Included, dev mode, realm imported at start | One realm, one public client, a test customer and a test admin |
-| Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment | Browsing, ordering, stock and payment |
+| Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
 | Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
@@ -74,9 +76,12 @@ shows which parts of it MyShoppingCart runs today.
 - The storefront only works at `http://localhost:8000/`, the one address Keycloak returns to.
 - Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
   orders survive restarts; orders placed before the ids were fixed no longer show up.
-- If you started the stack before inventory was added, its database volume has no `inventory`
-  database. Run `docker compose down -v` once. If your `.env` predates the admin user, copy the
-  `SHOP_ADMIN` lines from `.env.example` into it.
+- If your `.env` predates the admin user, copy the `SHOP_ADMIN` lines from `.env.example` into it.
+- Emails go to Mailpit, a test mailbox; nothing is delivered to real addresses. The mailbox at
+  `/mail/` has no sign-in, so anyone who can reach port 8000 can read it.
+- notification-service only reads events published after it first started, so nobody is emailed
+  about older orders. An email can, rarely, be sent twice if the service stops between sending it
+  and recording it.
 - Checkout places the order, then empties the cart. If Redis fails between the two, the order
   stands and the cart is emptied the next time the customer views, changes or checks out the
   cart; checking out again returns the same order.
@@ -118,7 +123,8 @@ The script signs in as the test user and checks these journeys through Kong:
 - as the admin: a restock the customer is refused, and a product that is added, restocked,
   repriced and taken off sale;
 - the storefront: served with its Content-Security-Policy, and Keycloak only sending a sign-in
-  back to it.
+  back to it;
+- the emails: the cancelled order from the start got exactly three (confirmed, cancelled, refund).
 
 ### Shop in the browser
 
@@ -127,6 +133,9 @@ Browse the products and their stock, add some to the cart, check out, and watch 
 from Processing to Paid on **My orders**, where you can also cancel it. Sign in as `SHOP_ADMIN`
 instead to get the **Admin** page: add products, change names and prices, restock, and take
 products off sale or put them back.
+
+Every order step sends the customer an email (confirmed, payment declined, out of stock,
+cancelled, refund on its way). Read them in the test mailbox at http://localhost:8000/mail/.
 
 ### Use the API directly
 
@@ -251,7 +260,7 @@ Open http://localhost:3000 (Grafana, no sign-in needed), go to **Explore**, choo
   (`{name="stock-reserved publish"}`, `{name="payment-completed publish"}`).
 
 They are separate traces because the outbox table does not carry the trace context from the
-request to the relay. The **Loki** data source has the logs of all four services and
+request to the relay. The **Loki** data source has the logs of all five services and
 **Prometheus** has their JVM, HTTP and Kafka metrics.
 
 ### Try the circuit breaker
@@ -309,6 +318,10 @@ This runs the unit tests and the integration tests against real PostgreSQL, Kafk
   needs a token, an admin restocks while a customer gets `403`, bad quantities and unknown
   products are refused, a new product starts at 0 and a repeated `ProductCreated` keeps its
   stock, unreadable message to the dead-letter topic.
+- `NotificationFlowIntegrationTest` (with a Mailpit container): a repeated payment event sends one
+  confirmation, a cancelled paid order gets its three emails, declines and out-of-stock orders are
+  explained, an event arriving before its order is sent once the order is known, and an order
+  without an email address sends nothing.
 - `PaymentFlowIntegrationTest`: a duplicated `StockReserved` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
 

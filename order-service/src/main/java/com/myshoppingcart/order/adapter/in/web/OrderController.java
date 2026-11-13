@@ -47,7 +47,7 @@ class OrderController {
         if (idempotencyKey != null && (idempotencyKey.isBlank() || idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH)) {
             throw new IllegalArgumentException("Idempotency-Key must be 1 to " + MAX_IDEMPOTENCY_KEY_LENGTH + " characters");
         }
-        return orders.place(jwt.getSubject(), request.items() == null ? List.of() : request.items(),
+        return orders.place(jwt.getSubject(), jwt.getClaimAsString("email"), request.items() == null ? List.of() : request.items(),
                 idempotencyKey == null ? null : "request:" + idempotencyKey);
     }
 

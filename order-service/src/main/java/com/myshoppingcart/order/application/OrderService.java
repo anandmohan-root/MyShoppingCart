@@ -26,16 +26,13 @@ public class OrderService {
         this.catalog = catalog;
     }
 
-    public Order place(String customerId, List<OrderItem> items) {
-        return place(customerId, items, null);
-    }
-
     /**
      * Places an order, at most once per {@code idempotencyKey} (null for no key). Repeating a key
      * returns the order already placed under it, without pricing or storing anything; repeating
-     * it with different items throws {@link IdempotencyKeyReusedException}.
+     * it with different items throws {@link IdempotencyKeyReusedException}. The customer's email
+     * (may be null) only travels in the OrderCreated event, for notifications; it is not stored.
      */
-    public Order place(String customerId, List<OrderItem> items, String idempotencyKey) {
+    public Order place(String customerId, String customerEmail, List<OrderItem> items, String idempotencyKey) {
         if (idempotencyKey != null) {
             Optional<Order> existing = orders.findByIdempotencyKey(customerId, idempotencyKey);
             if (existing.isPresent()) {
@@ -50,7 +47,7 @@ public class OrderService {
                 .toList();
         Order order = Order.place(customerId, lines);
         try {
-            orders.create(order, idempotencyKey);
+            orders.create(order, idempotencyKey, customerEmail);
         } catch (DuplicateIdempotencyKeyException e) {
             // A request with the same key was stored a moment earlier.
             return sameItems(orders.findByIdempotencyKey(customerId, idempotencyKey).orElseThrow(), items);

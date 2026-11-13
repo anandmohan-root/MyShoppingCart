@@ -12,9 +12,10 @@ public interface Orders {
     /**
      * Stores a new order and records its OrderCreated event atomically. {@code idempotencyKey} may
      * be null; throws {@link DuplicateIdempotencyKeyException} if the customer already has an order
-     * under that key, and then stores nothing.
+     * under that key, and then stores nothing. {@code customerEmail} (may be null) goes into the
+     * event only.
      */
-    void create(Order order, String idempotencyKey);
+    void create(Order order, String idempotencyKey, String customerEmail);
 
     Optional<Order> findById(UUID id);
 

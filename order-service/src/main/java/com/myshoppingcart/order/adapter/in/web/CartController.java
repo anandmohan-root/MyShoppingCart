@@ -60,6 +60,6 @@ class CartController {
     @PostMapping("/cart/checkout")
     @ResponseStatus(HttpStatus.CREATED)
     Order checkout(@AuthenticationPrincipal Jwt jwt) {
-        return carts.checkout(jwt.getSubject());
+        return carts.checkout(jwt.getSubject(), jwt.getClaimAsString("email"));
     }
 }

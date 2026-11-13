@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/notifications
+    username: shop
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: notification-service
+      # Only events from now on: starting this service must not email anyone about old orders.
+      auto-offset-reset: latest
+  mail:
+    host: localhost
+    port: 1025
+
+notification:
+  from: MyShoppingCart <shop@myshoppingcart.local>

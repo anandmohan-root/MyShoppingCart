@@ -9,7 +9,8 @@
 #   7. an order for more than is in stock ends as OUT_OF_STOCK,
 #   8. an admin restocks a product, and a customer may not,
 #   9. an admin adds a product, restocks it, changes its price and takes it off sale,
-#  10. the browser storefront is served with its security headers and can start a sign-in.
+#  10. the browser storefront is served with its security headers and can start a sign-in,
+#  11. the customer was emailed about the order from steps 1 and 3: paid, cancelled, refunded.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -204,4 +205,17 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SIGN_IN&redirect_uri=http%3A%2F%
 [ "$CODE" = "400" ] || { echo "FAILED: Keycloak accepted a foreign redirect ($CODE)"; exit 1; }
 echo "  served with a Content-Security-Policy; sign-in starts, and only returns to this site"
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, and the storefront served"
+echo "11. Checking the emails about order ${PAID:0:8} in the test mailbox ..."
+SUBJECTS=""
+for _ in $(seq 30); do
+  SUBJECTS=$(curl -s "$GATEWAY/mail/api/v1/search?query=${PAID:0:8}" | grep -o '"Subject":"[^"]*"' | sort | tr '\n' ' ')
+  [ "$(echo "$SUBJECTS" | grep -o Subject | wc -l)" -ge 3 ] && break
+  sleep 1
+done
+for subject in "Your order is confirmed" "Your order is cancelled" "Your refund is on its way"; do
+  echo "$SUBJECTS" | grep -q "$subject" || { echo "FAILED: no '$subject' email for order ${PAID:0:8} (found: $SUBJECTS)"; exit 1; }
+done
+[ "$(echo "$SUBJECTS" | grep -o Subject | wc -l)" -eq 3 ] || { echo "FAILED: expected 3 emails for order ${PAID:0:8}, found: $SUBJECTS"; exit 1; }
+echo "  3 emails: confirmed, cancelled, refund on its way"
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, restocked by an admin only, a product added, repriced and taken off sale, the storefront served, and the customer emailed"
