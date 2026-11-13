@@ -23,6 +23,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Optimistic concurrency | `JdbcOrders.transition` only saves if the status is unchanged, so a cancel and a payment arriving together cannot overwrite each other |
 | Dead-letter topics | A message that still fails after two retries moves to `<topic>-dlt`; `KafkaConfig` in order, inventory and payment |
 | Sign-in and JWT resource servers | Keycloak realm `infra/keycloak/shop-realm.json`; `SecurityConfig` in catalog, order and inventory |
+| Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may call `POST /stock/{productId}/restock` (`SecurityConfig` in inventory) |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
 | Token relay between services | `order-service` `CatalogClient` |
@@ -42,7 +43,7 @@ shows which parts of it MyShoppingCart runs today.
 | Reference architecture | In MyShoppingCart | Notes |
 |---|---|---|
 | Kong Gateway | Included, DB-less, routing only | Rate limiting, plugins and gateway-side JWT checks are not configured; services validate JWTs themselves |
-| Keycloak | Included, dev mode, realm imported at start | One realm, one public client, one test user |
+| Keycloak | Included, dev mode, realm imported at start | One realm, one public client, a test customer and a test admin |
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment | Browsing, ordering, stock and payment |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
@@ -60,11 +61,12 @@ shows which parts of it MyShoppingCart runs today.
 ## Current limitations
 
 - An order holds up to 20 products. Prices are looked up one product at a time at checkout.
-- Stock is reserved when the order is placed, before payment. Nothing restocks products yet:
-  stock only comes back from declined or cancelled orders. Change it in the `inventory`
-  database's `stock` table.
+- Stock is reserved when the order is placed, before payment. An admin can restock products the
+  shop already stocks; adding a new product to the shop is not built yet.
+- Only inventory checks roles; the other services accept any signed-in user.
 - If you started the stack before inventory was added, its database volume has no `inventory`
-  database. Run `docker compose down -v` once.
+  database. Run `docker compose down -v` once. If your `.env` predates the admin user, copy the
+  `SHOP_ADMIN` lines from `.env.example` into it.
 - Checkout places the order, then empties the cart. If Redis fails between the two, the order
   stands and the cart is emptied the next time the customer views, changes or checks out the
   cart; checking out again returns the same order.
@@ -99,7 +101,8 @@ bash scripts/smoke.sh
 The script signs in as the test user and checks these journeys through Kong: an order that is
 paid, an order above the card limit that is declined, a paid order that is cancelled and
 refunded, the list of the customer's orders, a cart of two products checked out as one
-order, an order sent twice with one `Idempotency-Key`, and an order for more than is in stock.
+order, an order sent twice with one `Idempotency-Key`, an order for more than is in stock, and
+a restock by the admin that the customer is refused.
 After each step it checks the stock went down or came back. The main steps by hand:
 
 ```bash
@@ -173,6 +176,23 @@ An order of 5 Espresso Machines (`11111111-1111-1111-1111-111111111111`, total 1
 stock or already cancelled order cannot be cancelled (`409`). Without the `Authorization` header
 every call returns `401`.
 
+### Restock as an admin
+
+The test admin (`SHOP_ADMIN` in `.env`) has the Keycloak realm role `admin`. Sign in as the admin:
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:8000/realms/shop/protocol/openid-connect/token -d grant_type=password -d client_id=shop-cli -d "username=$SHOP_ADMIN" --data-urlencode "password=$SHOP_ADMIN_PASSWORD" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+```
+
+Add 10 Espresso Machines (1 to 10000 at a time); the response shows the new stock level:
+
+```bash
+curl -s -X POST http://localhost:8000/stock/11111111-1111-1111-1111-111111111111/restock -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d '{"quantity":10}'
+```
+
+The same call with the customer's `$TOKEN` returns `403`; a product the shop does not stock
+returns `404`.
+
 ### See the traces
 
 Open http://localhost:3000 (Grafana, no sign-in needed), go to **Explore**, choose the
@@ -238,7 +258,8 @@ This runs the unit tests and the integration tests against real PostgreSQL, Kafk
 - `InventoryFlowIntegrationTest`: a duplicated `OrderCreated` reserves stock once and is passed on
   to payment, an order for more than is in stock reserves nothing, a declined payment puts the
   stock back once, a cancellation arriving before the order means nothing is reserved, `/stock`
-  needs a token, unreadable message to the dead-letter topic.
+  needs a token, an admin restocks while a customer gets `403`, bad quantities and unknown
+  products are refused, unreadable message to the dead-letter topic.
 - `PaymentFlowIntegrationTest`: a duplicated `StockReserved` is paid once, a charge above the limit
   is declined, `RefundRequested` refunds, unreadable message to the dead-letter topic.
 

@@ -12,7 +12,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
+import com.myshoppingcart.inventory.adapter.in.web.KeycloakRealmRoles;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -28,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -133,11 +137,52 @@ class InventoryFlowIntegrationTest {
     }
 
     @Test
+    void anAdminRestocksAndGetsTheNewLevel() throws Exception {
+        UUID product = productWithStock(5);
+
+        restock(product, "10", "admin")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(15));
+
+        assertThat(available(product)).isEqualTo(15);
+    }
+
+    @Test
+    void aCustomerCannotRestock() throws Exception {
+        UUID product = productWithStock(5);
+
+        restock(product, "10", "default-roles-shop").andExpect(status().isForbidden());
+
+        assertThat(available(product)).isEqualTo(5);
+    }
+
+    @Test
+    void restockRejectsBadQuantitiesAndUnknownProducts() throws Exception {
+        UUID product = productWithStock(5);
+
+        restock(product, "0", "admin").andExpect(status().isBadRequest());
+        restock(product, "10001", "admin").andExpect(status().isBadRequest());
+        restock(UUID.randomUUID(), "10", "admin").andExpect(status().isNotFound());
+        assertThat(available(product)).isEqualTo(5);
+    }
+
+    @Test
     void unreadableMessageMovesToTheDeadLetterTopic() {
         UUID key = UUID.randomUUID();
         kafkaTemplate.send("order-created", key.toString(), "this is not JSON");
 
         assertThat(readFor("order-created-dlt", key, 1)).containsExactly("this is not JSON");
+    }
+
+    /** Restocks with a token holding the given Keycloak realm role, read the way the service reads it. */
+    private ResultActions restock(UUID product, String quantity, String realmRole) throws Exception {
+        return mvc.perform(post("/stock/{id}/restock", product)
+                .with(jwt()
+                        .jwt(j -> j.claim("realm_access", Map.of("roles", List.of(realmRole)))
+                                .claim("preferred_username", "test-" + realmRole))
+                        .authorities(new KeycloakRealmRoles()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"quantity\":" + quantity + "}"));
     }
 
     private UUID productWithStock(int available) {

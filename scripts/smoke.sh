@@ -6,7 +6,8 @@
 #   4. the customer's orders are listed, newest first,
 #   5. a cart with two products is checked out as one paid order,
 #   6. an order sent twice with the same Idempotency-Key is placed once,
-#   7. an order for more than is in stock ends as OUT_OF_STOCK.
+#   7. an order for more than is in stock ends as OUT_OF_STOCK,
+#   8. an admin restocks a product, and a customer may not.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
 source .env
@@ -144,4 +145,18 @@ TOO_MANY=$(place "$ESPRESSO_MACHINE" $((MACHINE_STOCK + 1)))
 expect_status "$TOO_MANY" OUT_OF_STOCK
 expect_stock "$ESPRESSO_MACHINE" "$MACHINE_STOCK"
 
-echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, and out of stock"
+echo "8. Restocking 5 Espresso Machines as $SHOP_ADMIN, then trying as $SHOP_USER ..."
+ADMIN_TOKEN=$(curl -s -X POST "$GATEWAY/realms/shop/protocol/openid-connect/token" \
+  -d grant_type=password -d client_id=shop-cli \
+  -d "username=$SHOP_ADMIN" --data-urlencode "password=$SHOP_ADMIN_PASSWORD" | field access_token)
+[ -n "$ADMIN_TOKEN" ] || { echo "FAILED: could not sign in as $SHOP_ADMIN"; exit 1; }
+curl -s --fail -X POST "$GATEWAY/stock/$ESPRESSO_MACHINE/restock" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"quantity":5}' > /dev/null
+expect_stock "$ESPRESSO_MACHINE" $((MACHINE_STOCK + 5))
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GATEWAY/stock/$ESPRESSO_MACHINE/restock" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"quantity":5}')
+[ "$CODE" = "403" ] || { echo "FAILED: a customer restock returned $CODE, not 403"; exit 1; }
+echo "  $SHOP_USER is refused with 403"
+expect_stock "$ESPRESSO_MACHINE" $((MACHINE_STOCK + 5))
+
+echo "OK: paid, declined, cancelled with refund, listed, checked out from the cart, placed once per key, out of stock, and restocked by an admin only"

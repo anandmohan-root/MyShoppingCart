@@ -22,6 +22,9 @@ public interface Stock {
      */
     Map<UUID, Integer> lockAvailable(Collection<UUID> productIds);
 
+    /** Adds to the product's stock in one statement and returns the new level; empty if the product has no stock row. */
+    Optional<StockItem> add(UUID productId, int quantity);
+
     void take(List<OrderLine> lines);
 
     void putBack(List<OrderLine> lines);

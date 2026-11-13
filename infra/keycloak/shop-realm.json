@@ -25,6 +25,32 @@
           "temporary": false
         }
       ]
+    },
+    {
+      "username": "${SHOP_ADMIN}",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "${SHOP_ADMIN}@example.com",
+      "firstName": "Test",
+      "lastName": "Admin",
+      "realmRoles": [
+        "admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${SHOP_ADMIN_PASSWORD}",
+          "temporary": false
+        }
+      ]
     }
-  ]
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Can restock products"
+      }
+    ]
+  }
 }

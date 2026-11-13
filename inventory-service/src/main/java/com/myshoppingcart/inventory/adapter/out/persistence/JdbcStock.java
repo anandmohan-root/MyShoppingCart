@@ -55,6 +55,15 @@ class JdbcStock implements Stock {
     }
 
     @Override
+    public Optional<StockItem> add(UUID productId, int quantity) {
+        return jdbc.sql("UPDATE stock SET available = available + :quantity WHERE product_id = :id RETURNING product_id, available")
+                .param("quantity", quantity)
+                .param("id", productId)
+                .query(MAPPER)
+                .optional();
+    }
+
+    @Override
     public void take(List<OrderLine> lines) {
         change(lines, -1);
     }

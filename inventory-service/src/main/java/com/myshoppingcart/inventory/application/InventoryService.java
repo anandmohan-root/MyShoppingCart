@@ -3,6 +3,8 @@ package com.myshoppingcart.inventory.application;
 import com.myshoppingcart.inventory.domain.OrderLine;
 import com.myshoppingcart.inventory.domain.ReservationStatus;
 import com.myshoppingcart.inventory.domain.StockItem;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,11 @@ import java.util.UUID;
  */
 @Service
 public class InventoryService {
+
+    private static final Logger log = LoggerFactory.getLogger(InventoryService.class);
+
+    /** The most one restock can add, to catch a mistyped quantity. */
+    public static final int MAX_RESTOCK = 10_000;
 
     private final Stock stock;
     private final Reservations reservations;
@@ -35,6 +42,16 @@ public class InventoryService {
 
     public Optional<StockItem> find(UUID productId) {
         return stock.find(productId);
+    }
+
+    /** Adds stock for a product the shop already stocks; empty if it does not. */
+    public Optional<StockItem> restock(UUID productId, int quantity, String by) {
+        if (quantity < 1 || quantity > MAX_RESTOCK) {
+            throw new IllegalArgumentException("quantity must be between 1 and " + MAX_RESTOCK);
+        }
+        Optional<StockItem> restocked = stock.add(productId, quantity);
+        restocked.ifPresent(item -> log.info("{} restocked {} by {}, now {}", by, productId, quantity, item.available()));
+        return restocked;
     }
 
     /**
