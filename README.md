@@ -36,6 +36,7 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Timeout, retry, circuit breaker | `order-service` `CatalogClient` + `resilience4j` / `spring.http.client` in its `application.yml` |
 | Observability (traces, metrics, logs) | OpenTelemetry Java agent in `Dockerfile`, Grafana LGTM container |
 | Unit tests and Testcontainers integration tests | `*Test` and `*IntegrationTest` in each service |
+| Browser tests | Playwright in `e2e/`: a customer buys, sees the order paid and cancels it; an admin adds, restocks and takes a product off sale. `scripts/browser-tests.sh` runs them in Microsoft's Playwright container, so no browser needs installing |
 
 ## Mapping to the reference architecture
 
@@ -136,6 +137,17 @@ products off sale or put them back.
 
 Every order step sends the customer an email (confirmed, payment declined, out of stock,
 cancelled, refund on its way). Read them in the test mailbox at http://localhost:8000/mail/.
+
+### Run the browser tests
+
+```bash
+bash scripts/browser-tests.sh
+```
+
+The tests drive the storefront in a real browser (Chromium) inside the Playwright container, which
+shares Kong's network so it reaches the shop at `http://localhost:8000`. They sign in as the test
+users from `.env`, add a product named `E2E Kettle <time>` (left off sale afterwards) and place
+and cancel one order.
 
 ### Use the API directly
 
@@ -336,4 +348,5 @@ GitHub does not host long-running back ends, so there are two options:
   Docker. Choose a 4-core machine, then run the same `docker compose` and `scripts/smoke.sh`
   commands in the Codespace terminal. Call the API from that terminal: tokens are issued for
   `http://localhost:8000`, so a token fetched through a forwarded browser URL is rejected.
-- **Actions** – `.github/workflows/ci.yml` runs `mvn verify` on every push and pull request.
+- **Actions** – `.github/workflows/ci.yml` runs `mvn verify` on every push and pull request, and
+  in a second job starts the whole stack and runs `scripts/smoke.sh` and the browser tests.

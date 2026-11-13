@@ -91,7 +91,9 @@ async function api(path, { method = "GET", body } = {}) {
     } catch {
       // not a JSON problem body
     }
-    throw new Error(response.status === 403 ? "You are not allowed to do that." : detail);
+    const error = new Error(response.status === 403 ? "You are not allowed to do that." : detail);
+    error.status = response.status;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 }
@@ -320,7 +322,22 @@ async function adminPage() {
       el("td", {}, el("div", { class: "row" }, restockBy, el("button", {
         class: "secondary",
         onclick: action(async () => {
-          const item = await api(`/stock/${product.id}/restock`, { method: "POST", body: { quantity: Number(restockBy.value) } });
+          // A new product's stock entry appears a moment after it is added (inventory learns of it
+          // through an event), so a 404 right after adding is retried for a few seconds.
+          let item;
+          for (let attempt = 1; !item; attempt++) {
+            try {
+              item = await api(`/stock/${product.id}/restock`, { method: "POST", body: { quantity: Number(restockBy.value) } });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              if (attempt === 10) {
+                throw new Error(`Stock for ${product.name} is not set up yet. Try again in a moment.`);
+              }
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          }
           go("admin", `${product.name} now has ${item.available} in stock.`);
         }),
       }, "Restock"))),

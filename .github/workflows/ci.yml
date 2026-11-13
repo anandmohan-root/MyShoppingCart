@@ -19,3 +19,15 @@ jobs:
           cache: maven
       # Unit tests plus the Testcontainers integration tests (the runner has Docker).
       - run: mvn -B verify
+
+  # The whole stack in Docker, then the API journeys (smoke.sh) and the storefront in a browser.
+  end-to-end:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose up -d --build
+      - run: bash scripts/smoke.sh
+      - run: bash scripts/browser-tests.sh
+      - if: failure()
+        run: docker compose logs --no-color --tail=200

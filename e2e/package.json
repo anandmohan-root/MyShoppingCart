@@ -1,0 +1,11 @@
+{
+  "name": "myshoppingcart-e2e",
+  "private": true,
+  "description": "Browser tests for the storefront, against the running stack at http://localhost:8000",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}
