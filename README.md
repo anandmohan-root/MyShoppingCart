@@ -133,7 +133,7 @@ The script signs in as the test user and checks these journeys through Kong:
 - the storefront: served with its Content-Security-Policy, and Keycloak only sending a sign-in
   back to it;
 - the emails: the cancelled order from the start got exactly three (confirmed, cancelled, refund);
-- the gateway: 120 requests at once are partly refused with `429`, a 2 MB body with `413`, and the
+- the gateway: Kong reports its rate limits on each response, a 2 MB body is refused with `413`, and the
   mailbox without its password with `401`;
 - as the admin: the paid cart order appears among all paid orders and is cancelled; the customer
   is refused the admin endpoint.

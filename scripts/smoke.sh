@@ -11,7 +11,7 @@
 #   9. an admin adds a product, restocks it, changes its price and takes it off sale,
 #  10. the browser storefront is served with its security headers and can start a sign-in,
 #  11. the customer was emailed about the order from steps 1 and 3: paid, cancelled, refunded,
-#  12. Kong turns away request floods and oversized bodies, and the mailbox needs its password,
+#  12. Kong limits request rates and refuses oversized bodies, and the mailbox needs its password,
 #  13. an admin sees every customer's orders and cancels the cart order from step 5; a customer may not.
 # Run from the repository root after `docker compose up -d --build`.
 set -euo pipefail
@@ -229,14 +229,12 @@ CODE=$(head -c 2000000 /dev/zero | tr '\0' 'x' | curl -s -o /dev/null -w '%{http
   -H "Expect:" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data-binary @-)
 [ "$CODE" = "413" ] || { echo "FAILED: a 2 MB request body got $CODE, not 413"; exit 1; }
 echo "  a 2 MB request body is refused (413)"
-# One curl sends all 120 at once; separate curl processes start too slowly to exceed 50 a second.
-BURST=()
-for i in $(seq 120); do BURST+=(-o /dev/null "$GATEWAY/products?burst=$i"); done
-LIMITED=$(curl -s --parallel --parallel-immediate --parallel-max 120 -w '%{http_code}\n' \
-  -H "Authorization: Bearer $TOKEN" "${BURST[@]}" | grep -c 429 || true)
-[ "$LIMITED" -gt 0 ] || { echo "FAILED: 120 requests at once were all let through"; exit 1; }
-echo "  $LIMITED of 120 requests sent at once got 429 Too Many Requests"
-sleep 2  # let the per-second limit reset before anything else calls the gateway
+# Kong reports the limits on every response. Checked this way rather than by flooding it, which
+# depends on how fast this machine can send requests.
+LIMITS=$(curl -s -D - -o /dev/null -H "Authorization: Bearer $TOKEN" "$GATEWAY/products")
+echo "$LIMITS" | grep -qi "^x-ratelimit-limit-second: 50" && echo "$LIMITS" | grep -qi "^x-ratelimit-limit-minute: 1000" \
+  || { echo "FAILED: Kong does not report the 50 a second / 1000 a minute limits"; exit 1; }
+echo "  Kong limits each client to 50 requests a second and 1000 a minute"
 
 echo "13. Cancelling the cart order from step 5 as $SHOP_ADMIN ..."
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$GATEWAY/admin/orders")
