@@ -55,6 +55,8 @@ shows which parts of it MyShoppingCart runs today.
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
+| Web front end | Included: a single-page storefront in `storefront/`, served by nginx through Kong | Plain HTML and JavaScript, no framework or build step; Playwright browser tests in CI |
+| Email delivery | Mailpit stands in for a mail provider | Catches every email; nothing reaches real addresses |
 | Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
 | GitHub Actions | Included: `.github/workflows/ci.yml` builds and tests | No image publishing or deployment |
