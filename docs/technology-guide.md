@@ -38,7 +38,7 @@ Every service sends traces, metrics and logs to Grafana through OpenTelemetry.
 |---|---|---|---|
 | **Kong 3.9** (DB-less) | `infra/kong/kong.yml` | One entry point at port 8000: routes `/products`, `/orders`, `/cart`, `/stock`, `/realms`, `/mail`, `/`; rate limit (50/s, 1000/min) and 1 MB body limit | Run with a database or Kong Konnect, add TLS, WAF and a shared rate-limit store (Redis) |
 | **Keycloak 26** | `infra/keycloak/shop-realm.json` | Users, the `admin` role, clients `shop-web` (browser, PKCE) and `shop-cli` (tests); brute-force lockout | Production mode with a database, HA, real signing keys, social or corporate login |
-| **Spring Security resource server** | each service's `SecurityConfig`, `KeycloakRealmRoles` | Services validate the JWT themselves and map `realm_access.roles` to `ROLE_admin` | Same pattern; never trust the gateway alone |
+| **Spring Security resource server** | shared module `shop-security` (`ShopSecurityAutoConfiguration`, `KeycloakRealmRoles`); each service's `SecurityConfig` adds only its role rules | Services validate the JWT themselves and map `realm_access.roles` to `ROLE_admin`; the shared module keeps that code in one place | Same pattern; publish the module to your artifact repository and never trust the gateway alone |
 
 ## 3. Services
 

@@ -21,6 +21,7 @@
     </properties>
 
     <modules>
+        <module>shop-security</module>
         <module>catalog-service</module>
         <module>order-service</module>
         <module>payment-service</module>

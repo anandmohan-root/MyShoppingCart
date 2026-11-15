@@ -1,7 +1,7 @@
 package com.myshoppingcart.catalog;
 
 import com.jayway.jsonpath.JsonPath;
-import com.myshoppingcart.catalog.adapter.in.web.KeycloakRealmRoles;
+import com.myshoppingcart.security.KeycloakRealmRoles;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;

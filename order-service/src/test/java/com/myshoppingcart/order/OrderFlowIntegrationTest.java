@@ -1,6 +1,6 @@
 package com.myshoppingcart.order;
 
-import com.myshoppingcart.order.adapter.in.web.KeycloakRealmRoles;
+import com.myshoppingcart.security.KeycloakRealmRoles;
 import com.myshoppingcart.order.application.Carts;
 import com.myshoppingcart.order.application.ProductCatalog;
 import com.jayway.jsonpath.JsonPath;

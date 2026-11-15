@@ -2,6 +2,8 @@ package com.myshoppingcart.catalog.adapter.in.web;
 
 import com.myshoppingcart.catalog.application.CatalogService;
 import com.myshoppingcart.catalog.domain.Product;
+import com.myshoppingcart.security.KeycloakRealmRoles;
+import com.myshoppingcart.security.ShopSecurityAutoConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -26,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ProductController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ShopSecurityAutoConfiguration.class})
 class ProductControllerTest {
 
     @Autowired
