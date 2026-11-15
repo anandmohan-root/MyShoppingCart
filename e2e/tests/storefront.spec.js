@@ -26,11 +26,11 @@ async function buyBeansAndSeeThemPaid(page) {
   await expect(page.locator("#notice")).toContainText("in your cart");
 
   await page.getByRole("link", { name: /^Cart/ }).click();
-  await expect(page.getByRole("cell", { name: "Coffee Beans 1kg" })).toBeVisible();
+  await expect(page.locator(".cart-item", { hasText: "Coffee Beans 1kg" })).toBeVisible();
   await page.getByRole("button", { name: "Check out" }).click();
 
   // Newest order first; the page updates by itself when payment completes.
-  const order = page.locator("tbody tr").first();
+  const order = page.locator(".order").first();
   await expect(order).toContainText("Coffee Beans 1kg");
   await expect(order).toContainText("Paid", { timeout: 30_000 });
   return order;
@@ -45,7 +45,7 @@ test("a customer buys a product, sees it paid, and cancels it", async ({ page })
 
   page.once("dialog", dialog => dialog.accept());
   await order.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.locator("tbody tr").first()).toContainText("Cancelled");
+  await expect(page.locator(".order").first()).toContainText("Cancelled");
 });
 
 test("an admin adds a product, restocks it and takes it off sale", async ({ page }) => {
@@ -83,7 +83,8 @@ test("an admin cancels a customer's paid order, and the customer's page shows it
 
   await signIn(admin, SHOP_ADMIN, SHOP_ADMIN_PASSWORD);
   await admin.getByRole("link", { name: "All orders" }).click();
-  await admin.getByLabel("Status").selectOption("PAID");
+  await admin.getByRole("group", { name: "Status" }).getByRole("button", { name: "Paid", exact: true }).click();
+  await expect(admin.getByRole("button", { name: "Paid", exact: true })).toHaveAttribute("aria-pressed", "true");
   // Newest paid order first: the one the customer just placed.
   const row = admin.locator("tbody tr").first();
   await expect(row).toContainText("Coffee Beans 1kg × 1");

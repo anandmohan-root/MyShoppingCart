@@ -3,6 +3,8 @@ target/
 .idea/
 .vscode/
 *.iml
+storefront/node_modules/
+storefront/dist/
 e2e/node_modules/
 e2e/test-results/
 e2e/playwright-report/

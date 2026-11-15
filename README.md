@@ -11,6 +11,9 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 
 ## Architecture concepts
 
+For a short tour of every tool, where it is used, why, and what to change in a real project, see
+[docs/technology-guide.md](docs/technology-guide.md).
+
 | Concept | Where to look |
 |---|---|
 | Hexagonal layout (domain, application ports, adapters in/out) | every service: `domain`, `application`, `adapter/in`, `adapter/out` |
@@ -29,9 +32,9 @@ diagram, edit `docs/architecture.pptx` in PowerPoint and export the slide again 
 | Role-based access | Keycloak realm role `admin`, read from the token's `realm_access.roles` by `KeycloakRealmRoles`; only admins may add or change products (`SecurityConfig` in catalog), restock (`SecurityConfig` in inventory), and see or cancel every customer's orders under `/admin/orders` (`SecurityConfig` in order) |
 | Idempotent order placement | An order stores an idempotency key, unique per customer (`V5__order_idempotency_key.sql`): the client's `Idempotency-Key` header on `POST /orders`, or the cart's id at checkout. Repeating a request returns the order already placed; `OrderService.place`, `CartService.checkout` |
 | Cache-style store for short-lived data | The cart lives in Redis (`RedisCarts`, one hash per customer, removed after 30 days unchanged); orders stay in PostgreSQL |
-| Browser sign-in (OpenID Connect, PKCE) | `storefront/auth.js`: authorization code flow with PKCE for the public Keycloak client `shop-web`, written with the browser's Web Crypto API (no library). Keycloak only returns to `http://localhost:8000/` |
+| Browser sign-in (OpenID Connect, PKCE) | `storefront/src/auth.js`: authorization code flow with PKCE for the public Keycloak client `shop-web`, written with the browser's Web Crypto API (no library). Keycloak only returns to `http://localhost:8000/` |
 | Live updates by server push | `GET /orders/events` is a server-sent event stream of the caller's order status changes, sent only after the change commits (`OrderStatusStream`, a `@TransactionalEventListener`). The storefront reads it with `fetch`, so the token stays in a header, and reconnects when the server ends the stream every 50 s, before Kong's 60 s timeout |
-| Single-page app behind the gateway | `storefront/` is served by nginx through Kong on the same origin as the API, so no CORS rules are needed; nginx sends a strict Content-Security-Policy (`infra/nginx/storefront.conf`) and the pages are built without `innerHTML` |
+| Single-page app behind the gateway | `storefront/` is a React app, built by Vite into static files and served by nginx through Kong on the same origin as the API, so no CORS rules are needed; nginx sends a strict Content-Security-Policy (`infra/nginx/storefront.conf`), and React writes data as text, never as markup |
 | Token relay between services | `order-service` `CatalogClient` |
 | API gateway as single entry point | `infra/kong/kong.yml` |
 | Gateway protection | Kong limits each client address to 50 requests a second and 1000 a minute (`429` beyond) and refuses bodies over 1 MB (`413`); Keycloak locks an account for a while after 5 wrong passwords; the test mailbox has its own sign-in |
@@ -55,7 +58,7 @@ shows which parts of it MyShoppingCart runs today.
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
-| Web front end | Included: a single-page storefront in `storefront/`, served by nginx through Kong | Plain HTML and JavaScript, no framework or build step; Playwright browser tests in CI |
+| Web front end | Included: a single-page storefront in `storefront/`, served by nginx through Kong | React 19 built with Vite, no other libraries; Playwright browser tests in CI |
 | Email delivery | Mailpit stands in for a mail provider | Catches every email; nothing reaches real addresses |
 | Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
@@ -82,6 +85,9 @@ shows which parts of it MyShoppingCart runs today.
 - Live order updates reach only browsers connected to the order-service instance that handled
   the change; that is every browser while there is one instance, as here.
 - The storefront only works at `http://localhost:8000/`, the one address Keycloak returns to.
+  After changing files in `storefront/`, rebuild it: `docker compose up -d --build storefront`.
+- Products have no pictures: the storefront draws a coloured tile with the product's initials.
+  Search, sorting and the in-stock filter work in the browser on the products already loaded.
 - Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
   orders survive restarts; orders placed before the ids were fixed no longer show up.
 - If your `.env` predates the admin user or the mailbox password, copy the missing `SHOP_ADMIN`
