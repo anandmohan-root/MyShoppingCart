@@ -53,14 +53,14 @@ shows which parts of it MyShoppingCart runs today.
 
 | Reference architecture | In MyShoppingCart | Notes |
 |---|---|---|
-| Kong Gateway | Included, DB-less: routing, rate and size limits | No gateway-side JWT check: Kong's free JWT plugin needs Keycloak's keys in its config, and Keycloak in dev mode makes new keys on every restart. Every service validates the JWT itself |
-| Keycloak | Included, dev mode, realm imported at start | One realm, one public client, a test customer and a test admin |
+| Kong Gateway | Included, DB-less: routing, rate and size limits | No gateway-side JWT check: Kong's free JWT plugin needs Keycloak's keys in its config, which this sample does not copy into Kong. Every service validates the JWT itself |
+| Keycloak | Included, production mode over plain HTTP, its data in the PostgreSQL database `keycloak`; the realm is imported on first start | One realm, one public client, a test customer and a test admin |
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
 | PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
 | Web front end | Included: a single-page storefront in `storefront/`, served by nginx through Kong | React 19 built with Vite, no other libraries; Playwright browser tests in CI |
 | Email delivery | Mailpit stands in for a mail provider | Catches every email; nothing reaches real addresses |
-| Redis | Included, single node, no persistence settings | Holds carts only; the cart is part of order-service rather than its own service |
+| Redis | Included, single node, append-only file on the volume `redis-data` | Holds carts only; the cart is part of order-service rather than its own service |
 | OpenTelemetry + Grafana | Included via the `grafana/otel-lgtm` all-in-one image | Stands in for separate Tempo, Loki, Prometheus and Grafana installs |
 | GitHub Actions | Included: `.github/workflows/ci.yml` builds and tests | No image publishing or deployment |
 | NGINX, Spring Cloud Gateway | Not included | Kong is the single entry point |
@@ -90,6 +90,13 @@ shows which parts of it MyShoppingCart runs today.
   Search, sorting and the in-stock filter work in the browser on the products already loaded.
 - Orders belong to a Keycloak user id. The test users have fixed ids in the realm file, so their
   orders survive restarts; orders placed before the ids were fixed no longer show up.
+- An order line keeps the product's name from the moment of ordering. Orders placed before that
+  was added have no stored name and show the catalog's current name, or "Product no longer sold".
+- Keycloak imports `infra/keycloak/shop-realm.json` only while the realm does not exist. After
+  editing that file or the test users in `.env`, drop Keycloak's database and start again:
+  `docker compose stop keycloak`, then
+  `docker compose exec postgres psql -U shop -d postgres -c "DROP DATABASE keycloak"`, then
+  `docker compose up -d`.
 - If your `.env` predates the admin user or the mailbox password, copy the missing `SHOP_ADMIN`
   and `MAILBOX` lines from `.env.example` into it.
 - Emails go to Mailpit, a test mailbox; nothing is delivered to real addresses.
@@ -318,9 +325,9 @@ docker compose start catalog-service
 docker compose down
 ```
 
-Orders, payments and Kafka's topics are kept in the Docker volumes `postgres-data` and
-`kafka-data`, so the next `docker compose up -d` carries on where you stopped. Carts live in Redis
-without a volume and are emptied by `down`. To start again from nothing:
+Orders, payments, Keycloak's users and sessions, Kafka's topics and carts are kept in the Docker
+volumes `postgres-data`, `kafka-data` and `redis-data`, so the next `docker compose up -d` carries
+on where you stopped. To start again from nothing:
 
 ```bash
 docker compose down -v

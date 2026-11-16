@@ -78,11 +78,12 @@ class JdbcOrders implements Orders {
         for (int i = 0; i < order.lines().size(); i++) {
             OrderLine line = order.lines().get(i);
             jdbc.sql("""
-                            INSERT INTO order_line (order_id, line_no, product_id, quantity, unit_price)
-                            VALUES (:orderId, :lineNo, :productId, :quantity, :unitPrice)""")
+                            INSERT INTO order_line (order_id, line_no, product_id, product_name, quantity, unit_price)
+                            VALUES (:orderId, :lineNo, :productId, :productName, :quantity, :unitPrice)""")
                     .param("orderId", order.id())
                     .param("lineNo", i + 1)
                     .param("productId", line.productId())
+                    .param("productName", line.productName())
                     .param("quantity", line.quantity())
                     .param("unitPrice", line.unitPrice())
                     .update();
@@ -114,7 +115,8 @@ class JdbcOrders implements Orders {
 
     private static final RowMapper<LineRow> LINE_MAPPER = (rs, n) -> new LineRow(
             rs.getObject("order_id", UUID.class),
-            new OrderLine(rs.getObject("product_id", UUID.class), rs.getInt("quantity"), rs.getBigDecimal("unit_price")));
+            new OrderLine(rs.getObject("product_id", UUID.class), rs.getString("product_name"),
+                    rs.getInt("quantity"), rs.getBigDecimal("unit_price")));
 
     @Override
     public Optional<Order> findById(UUID id) {
@@ -161,7 +163,7 @@ class JdbcOrders implements Orders {
             return List.of();
         }
         Map<UUID, List<OrderLine>> lines = jdbc.sql("""
-                        SELECT order_id, product_id, quantity, unit_price FROM order_line
+                        SELECT order_id, product_id, product_name, quantity, unit_price FROM order_line
                         WHERE order_id IN (:ids) ORDER BY order_id, line_no""")
                 .param("ids", rows.stream().map(OrderRow::id).toList())
                 .query(LINE_MAPPER)

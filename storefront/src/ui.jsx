@@ -60,6 +60,38 @@ export function ActionButton({ onAction, disabled, icon, children, ...props }) {
   );
 }
 
+/** Asks "are you sure?" in place, instead of a browser pop-up, before running a destructive action. */
+export function ConfirmButton({ question, confirmLabel, onAction, children, ...props }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) {
+    return <button {...props} onClick={() => setAsking(true)}>{children}</button>;
+  }
+  return (
+    <span className="confirm" role="group" aria-label={question}>
+      <span>{question}</span>
+      <ActionButton className="danger" onAction={async () => {
+        await onAction();
+        setAsking(false);
+      }}>{confirmLabel}</ActionButton>
+      {/* Focus lands on the safe choice. */}
+      <button className="secondary" autoFocus onClick={() => setAsking(false)}>Keep</button>
+    </span>
+  );
+}
+
+/** Minus, quantity, plus. onChange gets the new quantity, between min and max. */
+export function Stepper({ label, quantity, min = 1, max = 99, onChange }) {
+  return (
+    <div className="stepper" role="group" aria-label={label}>
+      <button className="secondary" aria-label="Decrease quantity" disabled={quantity <= min}
+        onClick={() => onChange(quantity - 1)}><Icon name="minus" /></button>
+      <span aria-live="polite">{quantity}</span>
+      <button className="secondary" aria-label="Increase quantity" disabled={quantity >= max}
+        onClick={() => onChange(quantity + 1)}><Icon name="plus" /></button>
+    </div>
+  );
+}
+
 /** The catalog has no pictures, so each product gets a coloured tile with its initials. */
 export function Tile({ product, small }) {
   const hue = [...product.id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 6;

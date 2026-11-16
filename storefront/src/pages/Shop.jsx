@@ -1,15 +1,20 @@
 import { useContext, useState } from "react";
 import { api } from "../api.js";
 import Icon from "../icons.jsx";
-import { ActionButton, Empty, Loading, Notify, Tile, money, useLoad } from "../ui.jsx";
+import { ActionButton, Empty, Loading, Notify, Stepper, Tile, money, useLoad, useRun } from "../ui.jsx";
 
 export default function Shop({ query, refreshCart }) {
   const notify = useContext(Notify);
+  const run = useRun();
   const [sort, setSort] = useState("");
   const [inStockOnly, setInStockOnly] = useState(false);
-  const [data] = useLoad(async () => {
-    const [products, stock] = await Promise.all([api("/products"), api("/stock")]);
-    return { products, available: new Map(stock.map(item => [item.productId, item.available])) };
+  const [data, reload] = useLoad(async () => {
+    const [products, stock, cart] = await Promise.all([api("/products"), api("/stock"), api("/cart")]);
+    return {
+      products,
+      available: new Map(stock.map(item => [item.productId, item.available])),
+      inCart: new Map(cart.items.map(item => [item.productId, item.quantity])),
+    };
   });
   if (!data) {
     return <Loading />;
@@ -21,14 +26,16 @@ export default function Shop({ query, refreshCart }) {
     product.name.toLowerCase().includes(wanted) && (!inStockOnly || inStock(product) > 0));
   if (sort) {
     shown.sort((a, b) => (a.price - b.price) * (sort === "low" ? 1 : -1));
+  } else {
+    // Recommended: what can be bought comes first.
+    shown.sort((a, b) => (inStock(a) === 0) - (inStock(b) === 0));
   }
 
-  async function addToCart(product) {
-    const cart = await api("/cart");
-    const current = cart.items.find(item => item.productId === product.id)?.quantity ?? 0;
-    const quantity = Math.min(99, current + 1);
-    await api(`/cart/items/${product.id}`, { method: "PUT", body: { quantity } });
-    notify(`${product.name}: ${quantity} in your cart.`);
+  async function setQuantity(product, quantity) {
+    await (quantity === 0
+      ? api(`/cart/items/${product.id}`, { method: "DELETE" })
+      : api(`/cart/items/${product.id}`, { method: "PUT", body: { quantity } }));
+    await reload();
     refreshCart();
   }
 
@@ -57,6 +64,7 @@ export default function Shop({ query, refreshCart }) {
     <div className="grid">
       {shown.map(product => {
         const left = inStock(product);
+        const quantity = data.inCart.get(product.id) ?? 0;
         return (
           <article className={`card${left === 0 ? " sold-out" : ""}`} key={product.id}>
             <div className="card-media">
@@ -72,7 +80,16 @@ export default function Shop({ query, refreshCart }) {
                   {left === 0 ? "Out of stock" : left <= 5 ? "Few left" : `${left} in stock`}
                 </span>
               </p>
-              <ActionButton icon="bag" disabled={left === 0} onAction={() => addToCart(product)}>Add to cart</ActionButton>
+              {quantity > 0
+                ? <div className="in-cart">
+                    <Stepper label={`Quantity of ${product.name} in your cart`} quantity={quantity} min={0} max={Math.min(99, left)}
+                      onChange={next => run(() => setQuantity(product, next))} />
+                    <a href="#/cart">In cart<Icon name="arrowRight" /></a>
+                  </div>
+                : <ActionButton icon="bag" disabled={left === 0} onAction={async () => {
+                    await setQuantity(product, 1);
+                    notify(`${product.name} is in your cart.`);
+                  }}>Add to cart</ActionButton>}
             </div>
           </article>
         );

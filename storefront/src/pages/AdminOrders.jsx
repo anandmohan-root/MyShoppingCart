@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { api } from "../api.js";
 import Icon from "../icons.jsx";
-import { ActionButton, Loading, Notify, STATUS, STATUS_ICON, Stats, StatusPill, money, useRun } from "../ui.jsx";
+import { ConfirmButton, Loading, Notify, STATUS, STATUS_ICON, Stats, StatusPill, money, useRun } from "../ui.jsx";
 import AdminLayout from "./AdminLayout.jsx";
 
 /** Every customer's orders, newest first, for admins; filter by status, cancel any open one. */
@@ -76,21 +76,20 @@ export default function AdminOrders() {
                       <td>
                         <ul className="lines">
                           {order.lines.map(line => (
-                            <li key={line.productId}>{`${data.names.get(line.productId) ?? "Unknown product"} × ${line.quantity}`}</li>
+                            <li key={line.productId}>{`${line.productName ?? data.names.get(line.productId) ?? "Unknown product"} × ${line.quantity}`}</li>
                           ))}
                         </ul>
                       </td>
                       <td className="num"><strong>{money(order.total)}</strong></td>
                       <td><StatusPill status={order.status} /></td>
                       <td>{(order.status === "PENDING" || order.status === "PAID") &&
-                        <ActionButton className="danger" icon="xCircle" onAction={async () => {
-                          if (!confirm(order.status === "PAID" ? "Cancel this customer's order and refund the payment?" : "Cancel this customer's order?")) {
-                            return;
-                          }
-                          await api(`/admin/orders/${order.id}/cancel`, { method: "POST" });
-                          notify("Order cancelled; the customer is emailed.");
-                          await load(status);
-                        }}>Cancel</ActionButton>}</td>
+                        <ConfirmButton className="danger" confirmLabel="Yes, cancel"
+                          question={order.status === "PAID" ? "Cancel and refund?" : "Cancel this order?"}
+                          onAction={async () => {
+                            await api(`/admin/orders/${order.id}/cancel`, { method: "POST" });
+                            notify("Order cancelled; the customer is emailed.");
+                            await load(status);
+                          }}><Icon name="xCircle" />Cancel</ConfirmButton>}</td>
                     </tr>
                   );
                 })}

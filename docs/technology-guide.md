@@ -37,7 +37,7 @@ Every service sends traces, metrics and logs to Grafana through OpenTelemetry.
 | Technology | Where | Why | In a real project |
 |---|---|---|---|
 | **Kong 3.9** (DB-less) | `infra/kong/kong.yml` | One entry point at port 8000: routes `/products`, `/orders`, `/cart`, `/stock`, `/realms`, `/mail`, `/`; rate limit (50/s, 1000/min) and 1 MB body limit | Run with a database or Kong Konnect, add TLS, WAF and a shared rate-limit store (Redis) |
-| **Keycloak 26** | `infra/keycloak/shop-realm.json` | Users, the `admin` role, clients `shop-web` (browser, PKCE) and `shop-cli` (tests); brute-force lockout | Production mode with a database, HA, real signing keys, social or corporate login |
+| **Keycloak 26** | `infra/keycloak/shop-realm.json` | Users, the `admin` role, clients `shop-web` (browser, PKCE) and `shop-cli` (tests); brute-force lockout; production mode with its data in PostgreSQL | TLS, HA, social or corporate login |
 | **Spring Security resource server** | shared module `shop-security` (`ShopSecurityAutoConfiguration`, `KeycloakRealmRoles`); each service's `SecurityConfig` adds only its role rules | Services validate the JWT themselves and map `realm_access.roles` to `ROLE_admin`; the shared module keeps that code in one place | Same pattern; publish the module to your artifact repository and never trust the gateway alone |
 
 ## 3. Services
@@ -56,7 +56,7 @@ Every service sends traces, metrics and logs to Grafana through OpenTelemetry.
 | Technology | Where | Why | In a real project |
 |---|---|---|---|
 | **PostgreSQL 17** | one database per service (`infra/postgres/init.sql`) | Each service owns its data; no shared tables | Managed service (RDS / Aurora), backups, read replicas |
-| **Redis 7.4** | order-service cart (`cart:<customerId>` hash, 30-day expiry) | Fast, short-lived data that may be lost without harm | Managed Redis with replication |
+| **Redis 7.4** | order-service cart (`cart:<customerId>` hash, 30-day expiry) | Fast, short-lived data; an append-only file keeps carts across restarts | Managed Redis with replication |
 | **Apache Kafka 3.9** (KRaft) | topics `order-created`, `stock-reserved`, `payment-*`, `order-cancelled`, `refund-requested`, `product-created` | Services react to events instead of calling each other, so one can be down without stopping the others | Managed Kafka (MSK / Confluent), schema registry (Avro / Protobuf), 3+ brokers |
 | **Transactional outbox** | `outbox` table + `OutboxRelay` in catalog, order, inventory, payment | The database change and the event are saved in one transaction, so no event is lost or sent for a rolled-back change | Use change data capture (Debezium) instead of polling |
 | **Saga (choreography)** | order → inventory → payment, with compensations (release stock, refund) | A purchase spans services with no distributed transaction | Add an orchestrator (Temporal, Camunda) when flows get long |

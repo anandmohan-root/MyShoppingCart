@@ -47,7 +47,7 @@ public class CartService {
         if (!cart.containsKey(productId) && cart.size() >= Order.MAX_LINES) {
             throw new IllegalArgumentException("a cart can hold at most " + Order.MAX_LINES + " products");
         }
-        if (catalog.priceOf(productId).isEmpty()) {
+        if (catalog.find(productId).isEmpty()) {
             throw new UnknownProductException(productId);
         }
         carts.put(customerId, productId, quantity);

@@ -24,6 +24,8 @@ async function buyBeansAndSeeThemPaid(page) {
   const beans = page.locator("article.card", { hasText: "Coffee Beans 1kg" });
   await beans.getByRole("button", { name: "Add to cart" }).click();
   await expect(page.locator("#notice")).toContainText("in your cart");
+  // The card now shows the quantity instead of the Add button.
+  await expect(beans.getByRole("button", { name: "Increase quantity" })).toBeVisible();
 
   await page.getByRole("link", { name: /^Cart/ }).click();
   await expect(page.locator(".cart-item", { hasText: "Coffee Beans 1kg" })).toBeVisible();
@@ -43,8 +45,8 @@ test("a customer buys a product, sees it paid, and cancels it", async ({ page })
 
   const order = await buyBeansAndSeeThemPaid(page);
 
-  page.once("dialog", dialog => dialog.accept());
-  await order.getByRole("button", { name: "Cancel" }).click();
+  await order.getByRole("button", { name: "Cancel", exact: true }).click();
+  await order.getByRole("button", { name: "Yes, cancel" }).click();
   await expect(page.locator(".order").first()).toContainText("Cancelled");
 });
 
@@ -88,8 +90,8 @@ test("an admin cancels a customer's paid order, and the customer's page shows it
   // Newest paid order first: the one the customer just placed.
   const row = admin.locator("tbody tr").first();
   await expect(row).toContainText("Coffee Beans 1kg × 1");
-  admin.once("dialog", dialog => dialog.accept());
-  await row.getByRole("button", { name: "Cancel" }).click();
+  await row.getByRole("button", { name: "Cancel", exact: true }).click();
+  await row.getByRole("button", { name: "Yes, cancel" }).click();
   await expect(admin.locator("#notice")).toContainText("Order cancelled");
 
   // No reload: the customer's open page is told by the server.

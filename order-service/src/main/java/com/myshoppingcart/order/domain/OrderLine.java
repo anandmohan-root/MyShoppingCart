@@ -3,8 +3,11 @@ package com.myshoppingcart.order.domain;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-/** One product in an order, at the price it had when the order was placed. */
-public record OrderLine(UUID productId, int quantity, BigDecimal unitPrice) {
+/**
+ * One product in an order, with the name and price it had when the order was placed.
+ * The name is null for orders placed before names were stored.
+ */
+public record OrderLine(UUID productId, String productName, int quantity, BigDecimal unitPrice) {
 
     public OrderLine {
         if (quantity < 1) {

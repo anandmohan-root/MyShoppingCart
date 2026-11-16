@@ -50,7 +50,11 @@ public class OrderService {
             throw new IllegalArgumentException("an order can have at most " + Order.MAX_LINES + " lines");
         }
         List<OrderLine> lines = items.stream()
-                .map(item -> new OrderLine(item.productId(), item.quantity(), priceOf(item.productId())))
+                .map(item -> {
+                    ProductCatalog.Product product = catalog.find(item.productId())
+                            .orElseThrow(() -> new UnknownProductException(item.productId()));
+                    return new OrderLine(item.productId(), product.name(), item.quantity(), product.price());
+                })
                 .toList();
         Order order = Order.place(customerId, lines);
         try {
@@ -71,10 +75,6 @@ public class OrderService {
             throw new IdempotencyKeyReusedException();
         }
         return existing;
-    }
-
-    private BigDecimal priceOf(UUID productId) {
-        return catalog.priceOf(productId).orElseThrow(() -> new UnknownProductException(productId));
     }
 
     /** The caller's own orders, newest first. {@code limit} is kept between 1 and {@link #MAX_LIST}. */

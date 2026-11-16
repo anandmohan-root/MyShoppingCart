@@ -16,14 +16,14 @@ class OrderTest {
     private static final UUID PRODUCT = UUID.randomUUID();
 
     private static Order pending() {
-        return Order.place("alice", List.of(new OrderLine(PRODUCT, 1, BigDecimal.TEN)));
+        return Order.place("alice", List.of(new OrderLine(PRODUCT, "Beans", 1, BigDecimal.TEN)));
     }
 
     @Test
     void newOrderIsPendingWithTotalOfAllLines() {
         Order order = Order.place("alice", List.of(
-                new OrderLine(PRODUCT, 3, new BigDecimal("18.75")),
-                new OrderLine(UUID.randomUUID(), 1, new BigDecimal("249.00"))));
+                new OrderLine(PRODUCT, "Beans", 3, new BigDecimal("18.75")),
+                new OrderLine(UUID.randomUUID(), "Beans", 1, new BigDecimal("249.00"))));
 
         assertThat(order.status()).isEqualTo(OrderStatus.PENDING);
         assertThat(order.total()).isEqualByComparingTo("305.25");
@@ -31,14 +31,14 @@ class OrderTest {
 
     @Test
     void rejectsQuantityBelowOne() {
-        assertThatIllegalArgumentException().isThrownBy(() -> new OrderLine(PRODUCT, 0, BigDecimal.TEN));
+        assertThatIllegalArgumentException().isThrownBy(() -> new OrderLine(PRODUCT, "Beans", 0, BigDecimal.TEN));
     }
 
     @Test
     void rejectsEmptyOversizedOrRepeatedLines() {
-        OrderLine line = new OrderLine(PRODUCT, 1, BigDecimal.TEN);
+        OrderLine line = new OrderLine(PRODUCT, "Beans", 1, BigDecimal.TEN);
         List<OrderLine> tooMany = IntStream.rangeClosed(0, Order.MAX_LINES)
-                .mapToObj(i -> new OrderLine(UUID.randomUUID(), 1, BigDecimal.TEN)).toList();
+                .mapToObj(i -> new OrderLine(UUID.randomUUID(), "Beans", 1, BigDecimal.TEN)).toList();
 
         assertThatIllegalArgumentException().isThrownBy(() -> Order.place("alice", List.of()));
         assertThatIllegalArgumentException().isThrownBy(() -> Order.place("alice", tooMany));

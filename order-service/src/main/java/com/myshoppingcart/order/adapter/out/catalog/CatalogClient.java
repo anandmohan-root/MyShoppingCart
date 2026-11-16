@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
-import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,9 +22,6 @@ import java.util.UUID;
 @Component
 class CatalogClient implements ProductCatalog {
 
-    private record ProductResponse(BigDecimal price) {
-    }
-
     private final RestClient rest;
 
     CatalogClient(RestClient.Builder builder, @Value("${catalog.url}") String catalogUrl) {
@@ -35,14 +31,13 @@ class CatalogClient implements ProductCatalog {
     @Override
     @Retry(name = "catalog")
     @CircuitBreaker(name = "catalog")
-    public Optional<BigDecimal> priceOf(UUID productId) {
+    public Optional<Product> find(UUID productId) {
         var caller = (JwtAuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
         try {
-            ProductResponse product = rest.get().uri("/products/{id}", productId)
+            return Optional.ofNullable(rest.get().uri("/products/{id}", productId)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + caller.getToken().getTokenValue())
                     .retrieve()
-                    .body(ProductResponse.class);
-            return Optional.of(product.price());
+                    .body(Product.class));
         } catch (HttpClientErrorException.NotFound e) {
             return Optional.empty();
         }

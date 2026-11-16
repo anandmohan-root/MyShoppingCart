@@ -316,6 +316,13 @@ tr.off-sale input[type="text"] { color: var(--muted); text-decoration: line-thro
 .lines { display: grid; gap: .05rem; }
 
 /* ---------- small screens: slim two-row header, bottom tab bar, two-column grid */
+main:focus { outline: none; }
+.confirm { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .4rem; font-size: .8rem; font-weight: 600; }
+.problem { display: flex; align-items: center; gap: .3rem; grid-column: 1; font-size: .78rem; font-weight: 600; color: var(--bad); }
+.in-cart { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.in-cart .stepper { margin-top: 0; }
+.in-cart a { display: inline-flex; align-items: center; gap: .2rem; font-size: .78rem; font-weight: 700; color: var(--ok); }
+
 @media (max-width: 760px) {
   body { padding-bottom: 3.6rem; }
   header { flex-wrap: wrap; height: auto; gap: .5rem; padding: .5rem .8rem .6rem; }
@@ -362,3 +369,4 @@ tr.off-sale input[type="text"] { color: var(--muted); text-decoration: line-thro
   .add-product h2 { display: none; }
   footer .trust { gap: .3rem 1rem; }
 }
+.summary p.problem { justify-content: flex-start; }

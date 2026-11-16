@@ -1,7 +1,7 @@
 import { useContext, useEffect } from "react";
 import { api, followOrders } from "../api.js";
 import Icon from "../icons.jsx";
-import { ActionButton, Empty, Loading, Notify, StatusPill, money, useLoad } from "../ui.jsx";
+import { ConfirmButton, Empty, Loading, Notify, StatusPill, money, useLoad } from "../ui.jsx";
 
 const EXPLAIN = {
   PENDING: "Reserving stock and taking payment. This page updates by itself.",
@@ -43,7 +43,7 @@ export default function Orders() {
           <div>
             <p className="order-title">
               <StatusPill status={order.status} />
-              <strong>{order.lines.map(line => `${data.names.get(line.productId) ?? "Product no longer sold"} × ${line.quantity}`).join(", ")}</strong>
+              <strong>{order.lines.map(line => `${line.productName ?? data.names.get(line.productId) ?? "Product no longer sold"} × ${line.quantity}`).join(", ")}</strong>
             </p>
             <p className="hint meta">
               <span>{EXPLAIN[order.status]}</span>
@@ -53,14 +53,13 @@ export default function Orders() {
           </div>
           <p className="price">{money(order.total)}</p>
           {(order.status === "PENDING" || order.status === "PAID") &&
-            <ActionButton className="secondary" icon="xCircle" onAction={async () => {
-              if (!confirm(order.status === "PAID" ? "Cancel this order and refund the payment?" : "Cancel this order?")) {
-                return;
-              }
-              await api(`/orders/${order.id}/cancel`, { method: "POST" });
-              notify("Order cancelled.");
-              await reload();
-            }}>Cancel</ActionButton>}
+            <ConfirmButton className="secondary" confirmLabel="Yes, cancel"
+              question={order.status === "PAID" ? "Cancel and refund?" : "Cancel this order?"}
+              onAction={async () => {
+                await api(`/orders/${order.id}/cancel`, { method: "POST" });
+                notify(order.status === "PAID" ? "Order cancelled. Your refund has started." : "Order cancelled.");
+                await reload();
+              }}><Icon name="xCircle" />Cancel</ConfirmButton>}
         </li>
       ))}
     </ul>

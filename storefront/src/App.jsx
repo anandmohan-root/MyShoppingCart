@@ -11,6 +11,7 @@ import AdminOrders from "./pages/AdminOrders.jsx";
 
 const PAGES = { products: Shop, cart: Cart, orders: Orders, admin: AdminProducts, "all-orders": AdminOrders };
 const ADMIN_PAGES = ["admin", "all-orders"];
+const TITLES = { products: "Shop", cart: "Cart", orders: "My orders", admin: "Admin · Products", "all-orders": "Admin · Orders" };
 const pageFromHash = () => location.hash.slice(2) || "products";
 
 export default function App({ signInError }) {
@@ -30,6 +31,8 @@ export default function App({ signInError }) {
     const onHashChange = () => {
       setPage(pageFromHash());
       window.scrollTo(0, 0);
+      // Keyboard and screen-reader users start at the new page, not back in the header.
+      document.querySelector("main").focus();
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -40,7 +43,8 @@ export default function App({ signInError }) {
     }
   }, [signedIn, refreshCart]);
   useEffect(() => {
-    if (notice) {
+    // An error stays until it is dismissed; a confirmation goes away by itself.
+    if (notice?.kind === "ok") {
       const timer = setTimeout(() => setNotice(null), 6000);
       return () => clearTimeout(timer);
     }
@@ -48,6 +52,7 @@ export default function App({ signInError }) {
 
   const name = PAGES[page] && (!ADMIN_PAGES.includes(page) || user?.isAdmin) ? page : "products";
   const Page = PAGES[name];
+  useEffect(() => { document.title = signedIn ? `${TITLES[name]} · MyShoppingCart` : "MyShoppingCart"; }, [name, signedIn]);
   const link = (to, icon, label) => (
     <a href={`#/${to}`} className={name === to ? "active" : ""} aria-current={name === to ? "page" : undefined}>
       <Icon name={icon} />{label}
@@ -87,13 +92,13 @@ export default function App({ signInError }) {
         </>}
       </header>
       {notice && (
-        <div id="notice" role="status" className={notice.kind}>
+        <div id="notice" role={notice.kind === "error" ? "alert" : "status"} className={notice.kind}>
           <Icon name={notice.kind === "error" ? "alert" : "checkCircle"} />
           <span>{notice.message}</span>
           <button className="dismiss" aria-label="Dismiss message" onClick={() => setNotice(null)}><Icon name="x" /></button>
         </div>
       )}
-      <main>
+      <main tabIndex={-1}>
         {signedIn
           ? <Page query={query} refreshCart={refreshCart} />
           : <section className="welcome">

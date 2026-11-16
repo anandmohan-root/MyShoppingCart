@@ -94,8 +94,8 @@ class OrderFlowIntegrationTest {
 
     @BeforeEach
     void priceTheProduct() {
-        when(catalog.priceOf(PRODUCT)).thenReturn(Optional.of(new BigDecimal("18.75")));
-        when(catalog.priceOf(OTHER_PRODUCT)).thenReturn(Optional.of(new BigDecimal("249.00")));
+        when(catalog.find(PRODUCT)).thenReturn(Optional.of(new ProductCatalog.Product("Coffee Beans 1kg", new BigDecimal("18.75"))));
+        when(catalog.find(OTHER_PRODUCT)).thenReturn(Optional.of(new ProductCatalog.Product("Espresso Machine", new BigDecimal("249.00"))));
     }
 
     @Test
@@ -107,6 +107,7 @@ class OrderFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.lines[0].unitPrice").value(18.75))
+                .andExpect(jsonPath("$.lines[0].productName").value("Coffee Beans 1kg"))
                 .andExpect(jsonPath("$.total").value(37.5))
                 .andReturn().getResponse().getContentAsString();
         String orderId = JsonPath.read(response, "$.id");
@@ -119,6 +120,10 @@ class OrderFlowIntegrationTest {
 
         send("payment-completed", orderId);
         awaitStatus(orderId, "PAID");
+
+        // The name is read back from the database, not from the catalog.
+        mvc.perform(get("/orders/{id}", orderId).with(jwt().jwt(j -> j.subject("alice"))))
+                .andExpect(jsonPath("$.lines[0].productName").value("Coffee Beans 1kg"));
 
         mvc.perform(get("/orders/{id}", orderId).with(jwt().jwt(j -> j.subject("mallory"))))
                 .andExpect(status().isNotFound());
@@ -337,7 +342,7 @@ class OrderFlowIntegrationTest {
     @Test
     void cartRejectsUnknownProductsAndBadQuantities() throws Exception {
         UUID unknown = UUID.randomUUID();
-        when(catalog.priceOf(unknown)).thenReturn(Optional.empty());
+        when(catalog.find(unknown)).thenReturn(Optional.empty());
 
         setInCart("gina", unknown, 1).andExpect(status().isBadRequest());
         setInCart("gina", PRODUCT, 0).andExpect(status().isBadRequest());
