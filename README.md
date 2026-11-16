@@ -57,7 +57,7 @@ shows which parts of it MyShoppingCart runs today.
 | Keycloak | Included, production mode over plain HTTP, its data in the PostgreSQL database `keycloak`; the realm is imported on first start | One realm, one public client, a test customer and a test admin |
 | Spring Boot 3 / Java 21 services | Catalog, Order, Inventory, Payment, Notification | Browsing, ordering, stock, payment and customer emails |
 | Apache Kafka | Included, single KRaft node | No replication on one laptop |
-| PostgreSQL per service | Included: one database per service on one server | One server and one test user to save memory; no service reads another's database |
+| PostgreSQL per service | Included: one database per service on one server, either the `postgres` container or a PostgreSQL installed on the machine | One server and one test user to save memory; no service reads another's database |
 | Web front end | Included: a single-page storefront in `storefront/`, served by nginx through Kong | React 19 built with Vite, no other libraries; Playwright browser tests in CI |
 | Email delivery | Mailpit stands in for a mail provider | Catches every email; nothing reaches real addresses |
 | Redis | Included, single node, append-only file on the volume `redis-data` | Holds carts only; the cart is part of order-service rather than its own service |
@@ -95,8 +95,11 @@ shows which parts of it MyShoppingCart runs today.
 - Keycloak imports `infra/keycloak/shop-realm.json` only while the realm does not exist. After
   editing that file or the test users in `.env`, drop Keycloak's database and start again:
   `docker compose stop keycloak`, then
-  `docker compose exec postgres psql -U shop -d postgres -c "DROP DATABASE keycloak"`, then
-  `docker compose up -d`.
+  `docker compose run --rm --no-deps databases sh -c 'psql -h "$POSTGRES_HOST" -U shop -d postgres -c "DROP DATABASE keycloak"'`
+  (with `POSTGRES_HOST` from your `.env` exported, for example after `set -a; source .env; set +a`),
+  then `docker compose up -d`.
+- If your `.env` predates `POSTGRES_HOST`, copy `POSTGRES_HOST`, `COMPOSE_PROFILES` and
+  `POSTGRES_USER` from `.env.example`; without them `docker compose` stops and says so.
 - If your `.env` predates the admin user or the mailbox password, copy the missing `SHOP_ADMIN`
   and `MAILBOX` lines from `.env.example` into it.
 - Emails go to Mailpit, a test mailbox; nothing is delivered to real addresses.
@@ -326,12 +329,46 @@ docker compose down
 ```
 
 Orders, payments, Keycloak's users and sessions, Kafka's topics and carts are kept in the Docker
-volumes `postgres-data`, `kafka-data` and `redis-data`, so the next `docker compose up -d` carries
+volumes `postgres-data` (or your local PostgreSQL, see below), `kafka-data` and `redis-data`, so the next `docker compose up -d` carries
 on where you stopped. To start again from nothing:
 
 ```bash
 docker compose down -v
 ```
+
+### Use a PostgreSQL installed on this machine
+
+By default PostgreSQL is the `postgres` container. To keep the databases in a PostgreSQL you
+installed yourself (tested with PostgreSQL 18 on Windows), so the data lives outside Docker:
+
+1. Create the login the services use. This asks once for the password of the local superuser
+   `postgres`, which is not stored anywhere; the services connect as `POSTGRES_USER` with
+   `POSTGRES_PASSWORD` from `.env`:
+
+   ```bash
+   bash scripts/use-local-postgres.sh
+   ```
+
+2. In `.env`, set `POSTGRES_HOST=host.docker.internal` and leave `COMPOSE_PROFILES=` empty, so
+   the `postgres` container is not started.
+
+3. Start as usual:
+
+   ```bash
+   docker compose up -d
+   ```
+
+The `databases` job creates the six databases on the local server, and each service builds its
+tables on first start. Nothing is copied from the container's databases: the shop starts with
+the seed products and the two test users. To go back, restore the two lines from `.env.example`;
+the container's data is still in the volume `postgres-data`.
+
+`docker compose down -v` no longer touches these databases. To start again from nothing, drop
+them in the local PostgreSQL (pgAdmin, or `DROP DATABASE` for `catalog`, `orders`, `payments`,
+`inventory`, `notifications` and `keycloak`).
+
+`host.docker.internal` is provided by Docker Desktop. Codespaces and the GitHub Actions workflow
+use the container.
 
 ## Build and test without the stack
 

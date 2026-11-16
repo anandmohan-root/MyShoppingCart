@@ -2,8 +2,11 @@
 #   8000  Kong, the single entry point (storefront, API, Keycloak sign-in, test mailbox at /mail/)
 #   3000  Grafana (traces, metrics, logs)
 # Copy .env.example to .env before the first run.
+# PostgreSQL is the postgres container by default; POSTGRES_HOST and COMPOSE_PROFILES in .env
+# switch to a PostgreSQL installed on this machine (see the README).
 
 x-service-env: &service-env
+  SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-shop}
   SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
   SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
@@ -41,8 +44,8 @@ services:
         condition: service_completed_successfully
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: shop
+      KC_DB_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-shop}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
       # TLS would end at the gateway; inside the Docker network Keycloak speaks plain HTTP to Kong.
       KC_HTTP_ENABLED: "true"
@@ -56,8 +59,10 @@ services:
     volumes:
       - ./infra/keycloak/shop-realm.json:/opt/keycloak/data/import/shop-realm.json:ro
 
+  # Only started with the profile container-db (COMPOSE_PROFILES in .env).
   postgres:
     image: postgres:17-alpine
+    profiles: ["container-db"]
     environment:
       POSTGRES_USER: shop
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
@@ -74,9 +79,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        # Not there when the databases live in a PostgreSQL outside Docker.
+        required: false
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
-    command: ["psql", "-h", "postgres", "-U", "shop", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/init.sql"]
+    command: ["psql", "-h", "${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}", "-U", "${POSTGRES_USER:-shop}", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/init.sql"]
     volumes:
       - ./infra/postgres/init.sql:/init.sql:ro
 
@@ -141,7 +148,7 @@ services:
         SERVICE: catalog-service
     environment:
       <<: *service-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/catalog
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/catalog
       OTEL_SERVICE_NAME: catalog-service
 
   order-service:
@@ -159,7 +166,7 @@ services:
         SERVICE: order-service
     environment:
       <<: *service-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orders
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/orders
       SPRING_DATA_REDIS_HOST: redis
       OTEL_SERVICE_NAME: order-service
 
@@ -171,7 +178,7 @@ services:
         SERVICE: inventory-service
     environment:
       <<: *service-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/inventory
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/inventory
       OTEL_SERVICE_NAME: inventory-service
 
   notification-service:
@@ -182,7 +189,7 @@ services:
         SERVICE: notification-service
     environment:
       <<: *service-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notifications
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/notifications
       SPRING_MAIL_HOST: mailpit
       SPRING_MAIL_PORT: 1025
       OTEL_SERVICE_NAME: notification-service
@@ -195,7 +202,7 @@ services:
         SERVICE: payment-service
     environment:
       <<: *service-env
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/payments
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:?add POSTGRES_HOST and COMPOSE_PROFILES from .env.example to .env}:5432/payments
       OTEL_SERVICE_NAME: payment-service
 
 # Orders, payments and Kafka's topics outlive `docker compose down`; `down -v` removes them.

@@ -99,7 +99,8 @@ curl -s --fail -X POST -H "Authorization: Bearer $TOKEN" "$GATEWAY/orders/$PAID/
 expect_status "$PAID" CANCELLED
 REFUND=""
 for _ in $(seq 30); do
-  REFUND=$(docker compose exec -T postgres psql -U shop -d payments -tAc \
+  REFUND=$(docker compose run --rm -T --no-deps databases \
+    psql -h "$POSTGRES_HOST" -U "${POSTGRES_USER:-shop}" -d payments -tAc \
     "SELECT status FROM payment WHERE order_id = '$PAID'")
   [ "$REFUND" = "REFUNDED" ] && break
   sleep 1
